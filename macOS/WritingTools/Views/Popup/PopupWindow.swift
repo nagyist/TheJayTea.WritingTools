@@ -128,8 +128,6 @@ class PopupWindow: NSWindow {
     }
   }
 
-  deinit {
-  }
 
   private func setupTrackingArea() {
     guard let contentView = contentView else { return }
@@ -181,7 +179,7 @@ class PopupWindow: NSWindow {
 
   override func mouseDragged(with event: NSEvent) {
     guard
-      let _ = contentView,
+      contentView != nil,
       let initialLocation = initialLocation,
       let screen = screen
     else { return }

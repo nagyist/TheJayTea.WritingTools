@@ -4,6 +4,7 @@ import Observation
 
 private let logger = AppLogger.logger("PopupView")
 
+@MainActor
 @Observable
 final class PopupViewModel {
   var isEditMode: Bool = false
@@ -85,9 +86,7 @@ struct PopupView: View {
       if !viewModel.isEditMode {
         HStack(spacing: 8) {
           TextField(
-            appState.selectedText.isEmpty
-              ? "Describe your change..."
-              : "Describe your change...",
+            "Describe your change...",
             text: $customText
           )
           .textFieldStyle(.plain)
@@ -146,12 +145,12 @@ struct PopupView: View {
       }
     }
     .padding(.bottom, 8)
-    .windowBackground(useGradient: useGradientTheme)
+    .windowBackground(useGradient: useGradientTheme, cornerRadius: 20)
     .overlay(
-      RoundedRectangle(cornerRadius: 12)
+      RoundedRectangle(cornerRadius: 20)
         .strokeBorder(Color.gray.opacity(0.2), lineWidth: 1)
     )
-    .clipShape(.rect(cornerRadius: 12))
+    .clipShape(.rect(cornerRadius: 20))
     .shadow(color: Color.black.opacity(0.2), radius: 10, y: 5)
     // Sheet for editing individual command
     .sheet(item: $editingCommand) { command in
@@ -332,3 +331,89 @@ struct PopupView: View {
     }
   }
 }
+// MARK: - Preview
+
+#Preview("Popup View - Default") {
+  @Previewable @State var appState = {
+    let state = AppState.shared
+    state.selectedText = """
+      This is some sample text that has been selected by the user. \
+      It could be a paragraph from a document, an email, or any other text \
+      that needs to be processed by the AI writing tools.
+      """
+    return state
+  }()
+  
+  @Previewable @State var viewModel = PopupViewModel()
+  
+  PopupView(
+    appState: appState,
+    viewModel: viewModel,
+    closeAction: {
+      print("Close action triggered")
+    }
+  )
+  .frame(width: 400, height: 500)
+}
+
+#Preview("Popup View - Edit Mode") {
+  @Previewable @State var appState = {
+    let state = AppState.shared
+    state.selectedText = "Sample text for editing commands."
+    return state
+  }()
+  
+  @Previewable @State var viewModel = {
+    let vm = PopupViewModel()
+    vm.isEditMode = true
+    return vm
+  }()
+  
+  PopupView(
+    appState: appState,
+    viewModel: viewModel,
+    closeAction: {
+      print("Close action triggered")
+    }
+  )
+  .frame(width: 400, height: 500)
+}
+
+#Preview("Popup View - No Selection") {
+  @Previewable @State var appState = AppState.shared
+  @Previewable @State var viewModel = PopupViewModel()
+  
+  PopupView(
+    appState: appState,
+    viewModel: viewModel,
+    closeAction: {
+      print("Close action triggered")
+    }
+  )
+  .frame(width: 400, height: 500)
+}
+
+#Preview("Popup View - With Images") {
+  @Previewable @State var appState = {
+    let state = AppState.shared
+    state.selectedText = "Analyze this image and text together."
+    // Mock image data
+    if let mockImage = NSImage(systemSymbolName: "photo", accessibilityDescription: nil),
+       let tiffData = mockImage.tiffRepresentation {
+      state.selectedImages = [tiffData]
+    }
+    return state
+  }()
+  
+  @Previewable @State var viewModel = PopupViewModel()
+  
+  PopupView(
+    appState: appState,
+    viewModel: viewModel,
+    closeAction: {
+      print("Close action triggered")
+    }
+  )
+  .frame(width: 400, height: 500)
+}
+

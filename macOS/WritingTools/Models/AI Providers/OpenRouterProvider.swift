@@ -29,6 +29,7 @@ enum OpenRouterModel: String, CaseIterable {
     }
 }
 
+@MainActor
 @Observable
 final class OpenRouterProvider: AIProvider {
     var isProcessing = false

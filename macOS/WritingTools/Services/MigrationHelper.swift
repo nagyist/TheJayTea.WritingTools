@@ -2,6 +2,7 @@ import Foundation
 
 /// A utility class to help migrate from the old WritingOption/CustomCommand system
 /// to the new unified CommandModel system
+@MainActor
 class MigrationHelper {
     static let shared = MigrationHelper()
     

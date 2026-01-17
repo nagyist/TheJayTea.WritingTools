@@ -528,9 +528,12 @@ extension NSMutableAttributedString {
 
         // Apply insertions front-to-back
         for (index, ch) in insertions.sorted(by: { $0.offset < $1.offset }) {
-            let inherited = index > 0
-                ? attributes(at: index - 1, effectiveRange: nil)
-                : [:]
+            let inherited: [NSAttributedString.Key: Any]
+            if index > 0 && index - 1 < self.length {
+                inherited = attributes(at: index - 1, effectiveRange: nil)
+            } else {
+                inherited = [:]
+            }
             let piece = NSAttributedString(string: String(ch), attributes: inherited)
             insert(piece, at: index)
         }

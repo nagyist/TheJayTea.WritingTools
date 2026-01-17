@@ -26,6 +26,7 @@ enum MistralModel: String, CaseIterable {
     }
 }
 
+@MainActor
 @Observable
 final class MistralProvider: AIProvider {
     var isProcessing = false

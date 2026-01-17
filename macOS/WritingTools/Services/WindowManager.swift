@@ -3,6 +3,7 @@ import AppKit
 
 private let logger = AppLogger.logger("WindowManager")
 
+@MainActor
 class WindowManager: NSObject, NSWindowDelegate {
     static let shared = WindowManager()
 

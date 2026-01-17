@@ -31,6 +31,7 @@ private struct GenerateChunk: Decodable {
     let error: String?
 }
 
+@MainActor
 @Observable
 final class OllamaProvider: AIProvider {
     var isProcessing = false

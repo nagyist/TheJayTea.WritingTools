@@ -27,6 +27,7 @@ enum OpenAIModel: String, CaseIterable {
     }
 }
 
+@MainActor
 @Observable
 final class OpenAIProvider: AIProvider {
     var isProcessing = false

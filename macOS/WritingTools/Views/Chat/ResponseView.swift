@@ -165,7 +165,12 @@ struct ResponseView: View {
                     }
                     .padding()
                 }
-                .onChange(of: viewModel.messages, initial: true) { oldValue, newValue in
+                .onChange(of: viewModel.messages) { oldValue, newValue in
+                    // Only scroll if messages were added (not on initial load)
+                    guard newValue.count > oldValue.count else {
+                        return
+                    }
+                    
                     if let lastId = newValue.last?.id {
                         withAnimation {
                             proxy.scrollTo(lastId, anchor: .bottom)

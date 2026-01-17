@@ -29,6 +29,7 @@ enum GeminiModel: String, CaseIterable {
     }
 }
 
+@MainActor
 @Observable
 final class GeminiProvider: AIProvider {
     var isProcessing = false

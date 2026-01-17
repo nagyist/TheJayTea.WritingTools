@@ -27,6 +27,7 @@ enum AnthropicModel: String, CaseIterable {
     }
 }
 
+@MainActor
 @Observable
 final class AnthropicProvider: AIProvider {
     var isProcessing = false

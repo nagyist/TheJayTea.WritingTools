@@ -8,9 +8,9 @@
 import Foundation
 import Security
 
-class KeychainManager {
+final class KeychainManager: @unchecked Sendable {
     static let shared = KeychainManager()
-    
+
     private init() {}
     
     enum KeychainError: LocalizedError {

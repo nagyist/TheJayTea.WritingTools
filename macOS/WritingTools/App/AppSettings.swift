@@ -212,23 +212,23 @@ final class AppSettings {
     private func scheduleKeychainWrite(_ value: String, forKey key: String) {
         keychainWriteTasks[key]?.cancel()
 
-        let keychain = keychain
         keychainWriteTasks[key] = Task { [weak self] in
             guard let self else { return }
             defer { self.keychainWriteTasks[key] = nil }
             try? await Task.sleep(for: self.keychainWriteDelay)
             guard !Task.isCancelled else { return }
+            let keychainRef = self.keychain
             Task.detached(priority: .utility) {
-                try? keychain.save(value, forKey: key)
+                try? keychainRef.save(value, forKey: key)
             }
         }
     }
     
     // MARK: - Convenience
     func resetAll() {
-        let domain = Bundle.main.bundleIdentifier!
+        guard let domain = Bundle.main.bundleIdentifier else { return }
         UserDefaults.standard.removePersistentDomain(forName: domain)
-        
+
         // Clear Keychain API keys
         try? keychain.clearAllApiKeys()
     }
