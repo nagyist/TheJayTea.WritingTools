@@ -6,13 +6,13 @@
 //
 
 import AppKit
+import UniformTypeIdentifiers
 
 extension NSPasteboard {
   func readAttributedSelection() -> NSAttributedString? {
     // Prefer RTFD (common in Apple apps), then RTF, then HTML
-    if let flatRtfd = data(forType: NSPasteboard.PasteboardType(
-      "com.apple.flat-rtfd"
-    )) {
+    let flatRtfdType = NSPasteboard.PasteboardType(UTType.flatRTFD.identifier)
+    if let flatRtfd = data(forType: flatRtfdType) {
       if let att = try? NSAttributedString(
         data: flatRtfd,
         options: [.documentType: NSAttributedString.DocumentType.rtfd],

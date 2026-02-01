@@ -3,7 +3,7 @@ import SwiftUI
 @main
 struct writing_toolsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @State private var appState = AppState.shared
+    private let appState = AppState.shared
     
     var body: some Scene {
         WindowGroup {
@@ -13,9 +13,5 @@ struct writing_toolsApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .commands {
-            SidebarCommands()
-            ToolbarCommands()
-        }
     }
 }

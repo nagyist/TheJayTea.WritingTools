@@ -34,7 +34,7 @@ final class AnthropicProvider: AIProvider {
     
     private var config: AnthropicConfig
     private var aiProxyService: AnthropicService?
-    private var currentTask: Task<Void, Never>?
+    private var currentTask: Task<String, Error>?
     
     init(config: AnthropicConfig) {
         self.config = config
@@ -53,7 +53,10 @@ final class AnthropicProvider: AIProvider {
         streaming: Bool = false
     ) async throws -> String {
         isProcessing = true
-        defer { isProcessing = false }
+        defer {
+            isProcessing = false
+            currentTask = nil
+        }
 
         let config = self.config
         let systemPrompt = systemPrompt
@@ -61,7 +64,7 @@ final class AnthropicProvider: AIProvider {
         let images = images
         let streaming = streaming
 
-        return try await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             guard !config.apiKey.isEmpty else {
                 throw NSError(
                     domain: "AnthropicAPI",
@@ -166,7 +169,9 @@ final class AnthropicProvider: AIProvider {
                 logger.error("Anthropic request failed: \(error.localizedDescription)")
                 throw error
             }
-        }.value
+        }
+        currentTask = task
+        return try await task.value
     }
     
     func cancel() {

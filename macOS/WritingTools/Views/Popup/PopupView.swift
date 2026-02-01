@@ -55,6 +55,8 @@ struct PopupView: View {
         }
         .buttonStyle(.plain)
         .help(viewModel.isEditMode ? "Exit Edit Mode" : "Close")
+        .accessibilityLabel(viewModel.isEditMode ? "Exit edit mode" : "Close popup")
+        .accessibilityHint(viewModel.isEditMode ? "Return to command list" : "Dismiss the popup")
         .padding(.top, 8)
         .padding(.leading, 8)
 
@@ -62,10 +64,7 @@ struct PopupView: View {
 
         Button(action: {
           viewModel.isEditMode.toggle()
-          NotificationCenter.default.post(
-            name: NSNotification.Name("EditModeChanged"),
-            object: nil
-          )
+          // Note: PopupWindow observes viewModel.isEditMode directly via @Observable
         }) {
           Image(
             systemName: viewModel.isEditMode ? "checkmark" : "square.and.pencil"
@@ -78,6 +77,8 @@ struct PopupView: View {
         }
         .buttonStyle(.plain)
         .help(viewModel.isEditMode ? "Save Changes" : "Edit Commands")
+        .accessibilityLabel(viewModel.isEditMode ? "Save changes" : "Edit commands")
+        .accessibilityHint(viewModel.isEditMode ? "Exit edit mode" : "Edit command list")
         .padding(.top, 8)
         .padding(.trailing, 8)
       }
@@ -95,6 +96,8 @@ struct PopupView: View {
             isLoading: isCustomLoading,
             onSubmit: processCustomChange
           )
+          .accessibilityLabel("Custom instruction")
+          .accessibilityHint("Describe how to modify the selected text")
         }
         .padding(.horizontal)
       }
@@ -176,12 +179,7 @@ struct PopupView: View {
     // Sheet for managing all commands
     .sheet(isPresented: $showingCommandsView) {
       CommandsView(commandManager: appState.commandManager)
-        .onDisappear {
-          NotificationCenter.default.post(
-            name: NSNotification.Name("CommandsChanged"),
-            object: nil
-          )
-        }
+      // Note: PopupWindow observes commandManager.commands directly via @Observable
     }
     .alert("Error", isPresented: $showingErrorAlert) {
       Button("OK", role: .cancel) {}

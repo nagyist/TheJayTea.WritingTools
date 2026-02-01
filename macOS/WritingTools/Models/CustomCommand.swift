@@ -37,8 +37,14 @@ final class CustomCommandsManager {
   private let iCloudMTimeKey = "icloud.custom_commands.v1.mtime"
   private let localMTimeDefaultsKey = "custom_commands_mtime.v1"
 
-  // Prevents push loops when applying remote changes
+  // Synchronization queue for thread-safe iCloud operations
+  private let syncQueue = DispatchQueue(label: "com.writingtools.customcommands.sync")
+
+  // Prevents push loops when applying remote changes (accessed only on syncQueue)
   private var isApplyingCloudChange = false
+
+  // Track pending local changes during cloud sync
+  private var pendingLocalSave = false
 
   private var kvsObserver: NSObjectProtocol?
 
@@ -110,51 +116,83 @@ final class CustomCommandsManager {
 
   // MARK: - iCloud sync
 
-  // Push local -> iCloud, with modified time
+  // Push local -> iCloud, with modified time (thread-safe)
   private func pushToICloud() {
-    guard !isApplyingCloudChange else { return }
+    // Capture current commands for encoding
+    let currentCommands = commands
 
-    do {
-      let data = try JSONEncoder().encode(commands)
-      let now = Date()
+    syncQueue.async { [weak self] in
+      guard let self else { return }
 
-      iCloudStore.set(data, forKey: iCloudDataKey)
-      iCloudStore.set(now, forKey: iCloudMTimeKey)
+      // If we're applying cloud changes, mark as pending and defer
+      guard !self.isApplyingCloudChange else {
+        self.pendingLocalSave = true
+        return
+      }
 
-      UserDefaults.standard.set(now, forKey: localMTimeDefaultsKey)
-    } catch {
-      logger.error("CustomCommandsManager: Failed to encode for iCloud: \(error.localizedDescription)")
+      do {
+        let data = try JSONEncoder().encode(currentCommands)
+        let now = Date()
+
+        DispatchQueue.main.async {
+          self.iCloudStore.set(data, forKey: self.iCloudDataKey)
+          self.iCloudStore.set(now, forKey: self.iCloudMTimeKey)
+          UserDefaults.standard.set(now, forKey: self.localMTimeDefaultsKey)
+        }
+      } catch {
+        logger.error("CustomCommandsManager: Failed to encode for iCloud: \(error.localizedDescription)")
+      }
     }
   }
 
-  // Pull iCloud -> local if iCloud is newer
+  // Pull iCloud -> local if iCloud is newer (thread-safe)
   private func pullFromICloudIfNewer() {
-    guard let remoteMTime = iCloudStore.object(forKey: iCloudMTimeKey) as? Date
-    else { return }
+    syncQueue.async { [weak self] in
+      guard let self else { return }
 
-    let localMTime =
-      UserDefaults.standard.object(forKey: localMTimeDefaultsKey) as? Date
+      guard let remoteMTime = self.iCloudStore.object(forKey: self.iCloudMTimeKey) as? Date
+      else { return }
 
-    guard localMTime == nil || remoteMTime > localMTime! else {
-      return
-    }
+      let localMTime =
+        UserDefaults.standard.object(forKey: self.localMTimeDefaultsKey) as? Date
 
-    guard let data = iCloudStore.data(forKey: iCloudDataKey) else { return }
+      guard localMTime == nil || remoteMTime > localMTime! else {
+        return
+      }
 
-    do {
-      let remoteCommands =
-        try JSONDecoder().decode([CustomCommand].self, from: data)
+      guard let data = self.iCloudStore.data(forKey: self.iCloudDataKey) else { return }
 
-      isApplyingCloudChange = true
-      self.commands = remoteCommands
-      saveLocalCommands()
+      do {
+        let remoteCommands =
+          try JSONDecoder().decode([CustomCommand].self, from: data)
 
-      // Update local mtime after applying
-      UserDefaults.standard.set(remoteMTime, forKey: localMTimeDefaultsKey)
-      isApplyingCloudChange = false
+        self.isApplyingCloudChange = true
 
-    } catch {
-      logger.error("CustomCommandsManager: Failed to decode from iCloud: \(error.localizedDescription)")
+        // Update commands on main thread since it's @Observable
+        DispatchQueue.main.async {
+          self.commands = remoteCommands
+          self.saveLocalCommands()
+
+          // Update local mtime after applying
+          UserDefaults.standard.set(remoteMTime, forKey: self.localMTimeDefaultsKey)
+
+          // Mark cloud change as complete on sync queue
+          self.syncQueue.async {
+            self.isApplyingCloudChange = false
+
+            // If there was a pending local save during cloud sync, push it now
+            if self.pendingLocalSave {
+              self.pendingLocalSave = false
+              DispatchQueue.main.async {
+                self.pushToICloud()
+              }
+            }
+          }
+        }
+      } catch {
+        self.isApplyingCloudChange = false
+        logger.error("CustomCommandsManager: Failed to decode from iCloud: \(error.localizedDescription)")
+      }
     }
   }
 

@@ -49,13 +49,14 @@ struct ClipboardSnapshot {
     }
     
     /// Restores this snapshot to the clipboard
-    func restore() {
+    @discardableResult
+    func restore() -> Bool {
         let pb = NSPasteboard.general
         pb.prepareForNewContents(with: [])
         
         guard !items.isEmpty else {
             logger.info("ClipboardSnapshot: No items to restore")
-            return
+            return true
         }
         
         // Prepare pasteboard items
@@ -78,8 +79,9 @@ struct ClipboardSnapshot {
         if success {
             logger.debug("ClipboardSnapshot: Successfully restored \(pasteboardItems.count) items")
         } else {
-            logger.error("ClipboardSnapshot: Failed to restore clipboard items")
+            logger.error("ClipboardSnapshot: Failed to restore \(pasteboardItems.count) items")
         }
+        return success
     }
     
     /// Returns true if this snapshot contains any data
@@ -109,7 +111,8 @@ extension NSPasteboard {
     }
     
     /// Convenience method to restore a snapshot
-    func restore(snapshot: ClipboardSnapshot) {
+    @discardableResult
+    func restore(snapshot: ClipboardSnapshot) -> Bool {
         snapshot.restore()
     }
 }

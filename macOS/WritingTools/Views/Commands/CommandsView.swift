@@ -29,6 +29,8 @@ struct CommandsView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Close")
+                .accessibilityLabel("Close commands manager")
+                .accessibilityHint("Dismiss the commands window")
             }
             .padding()
             
@@ -82,7 +84,7 @@ struct CommandsView: View {
                 Spacer()
             }
         }
-        .frame(width: 600, height: 500)
+        .frame(minWidth: 520, idealWidth: 600, maxWidth: 840, minHeight: 420, idealHeight: 500, maxHeight: 820)
         .windowBackground(useGradient: settings.useGradientTheme)
         .sheet(isPresented: $isAddingNew) {
             CommandEditor(
@@ -95,7 +97,8 @@ struct CommandsView: View {
                 onCancel: {
                     newCommand = CommandModel(name: "", prompt: "", icon: "text.bubble")
                     isAddingNew = false
-                }
+                },
+                commandManager: commandManager
             )
         }
         .sheet(item: $editingCommand) { command in
@@ -250,6 +253,8 @@ struct CommandRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Edit command")
+                .accessibilityLabel("Edit \(command.name)")
+                .accessibilityHint("Open editor for this command")
                 
                 Button(action: { onDelete(command) }) {
                     Image(systemName: "trash")
@@ -261,6 +266,8 @@ struct CommandRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Delete command")
+                .accessibilityLabel("Delete \(command.name)")
+                .accessibilityHint("Remove this command")
             }
         }
         .padding(.vertical, 8)

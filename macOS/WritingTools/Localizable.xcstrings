@@ -329,6 +329,9 @@
         }
       }
     },
+    "Activate Writing Tools shortcut" : {
+
+    },
     "Activate Writing Tools:" : {
       "localizations" : {
         "de" : {
@@ -814,6 +817,9 @@
           }
         }
       }
+    },
+    "Applies settings and closes the window" : {
+
     },
     "Are you sure you want to delete the downloaded model %@? You'll need to download it again to use it." : {
       "localizations" : {
@@ -1498,6 +1504,9 @@
         }
       }
     },
+    "Choose how Writing Tools windows are styled." : {
+
+    },
     "Choose whether custom prompts open in a separate response window or replace text inline." : {
       "localizations" : {
         "de" : {
@@ -1564,6 +1573,15 @@
           }
         }
       }
+    },
+    "Close commands manager" : {
+
+    },
+    "Close editor" : {
+
+    },
+    "Close popup" : {
+
     },
     "Command Name" : {
       "localizations" : {
@@ -1940,6 +1958,9 @@
         }
       }
     },
+    "Copies this message to the clipboard" : {
+
+    },
     "Copy" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1984,6 +2005,9 @@
           }
         }
       }
+    },
+    "Copy message" : {
+
     },
     "Copy Message" : {
       "localizations" : {
@@ -2138,6 +2162,9 @@
           }
         }
       }
+    },
+    "Custom instruction" : {
+
     },
     "Custom Model Name" : {
       "localizations" : {
@@ -2337,6 +2364,9 @@
         }
       }
     },
+    "Describe how to modify the selected text" : {
+
+    },
     "Describe what the assistant should do" : {
       "localizations" : {
         "de" : {
@@ -2380,6 +2410,15 @@
           }
         }
       }
+    },
+    "Discard changes and close" : {
+
+    },
+    "Dismiss the commands window" : {
+
+    },
+    "Dismiss the popup" : {
+
     },
     "Display response in window" : {
       "localizations" : {
@@ -2871,6 +2910,9 @@
         }
       }
     },
+    "Edit %@" : {
+
+    },
     "Edit Built-In Command" : {
       "localizations" : {
         "de" : {
@@ -2937,6 +2979,12 @@
         }
       }
     },
+    "Edit command list" : {
+
+    },
+    "Edit commands" : {
+
+    },
     "Edit Commands" : {
       "localizations" : {
         "de" : {
@@ -2958,6 +3006,9 @@
           }
         }
       }
+    },
+    "Edit this command's details" : {
+
     },
     "Editor" : {
       "localizations" : {
@@ -3068,6 +3119,9 @@
           }
         }
       }
+    },
+    "Enable Screenshot OCR" : {
+
     },
     "Enable Screenshot OCR (Optional)" : {
       "localizations" : {
@@ -3201,6 +3255,9 @@
         }
       }
     },
+    "Exit edit mode" : {
+
+    },
     "Exit Edit Mode" : {
       "localizations" : {
         "de" : {
@@ -3332,6 +3389,9 @@
           }
         }
       }
+    },
+    "Follow-up question" : {
+
     },
     "Formal" : {
       "localizations" : {
@@ -4393,6 +4453,12 @@
         }
       }
     },
+    "Makes the response text larger" : {
+
+    },
+    "Makes the response text smaller" : {
+
+    },
     "Manage Commands" : {
       "localizations" : {
         "de" : {
@@ -5142,6 +5208,9 @@
         }
       }
     },
+    "Open editor for this command" : {
+
+    },
     "Open Google AI Studio to generate an API key." : {
       "localizations" : {
         "de" : {
@@ -5274,6 +5343,9 @@
         }
       }
     },
+    "Open Privacy and Security settings" : {
+
+    },
     "Open System Settings to manage permissions." : {
       "localizations" : {
         "de" : {
@@ -5317,6 +5389,9 @@
           }
         }
       }
+    },
+    "Open the onboarding window to review permissions and setup." : {
+
     },
     "Open the onboarding window to set up WritingTools again." : {
       "localizations" : {
@@ -6004,6 +6079,9 @@
         }
       }
     },
+    "Provider settings" : {
+
+    },
     "Provider:" : {
       "localizations" : {
         "de" : {
@@ -6047,6 +6125,9 @@
           }
         }
       }
+    },
+    "Refresh permission status" : {
+
     },
     "Refresh Status" : {
       "localizations" : {
@@ -6114,6 +6195,12 @@
         }
       }
     },
+    "Remove this command" : {
+
+    },
+    "Removes this command" : {
+
+    },
     "Required" : {
       "localizations" : {
         "de" : {
@@ -6135,6 +6222,9 @@
           }
         }
       }
+    },
+    "Requires Screen Recording permission to use OCR on screenshots." : {
+
     },
     "Reset" : {
       "localizations" : {
@@ -6224,6 +6314,9 @@
         }
       }
     },
+    "Reset text size" : {
+
+    },
     "Reset to Defaults" : {
       "localizations" : {
         "de" : {
@@ -6245,6 +6338,9 @@
           }
         }
       }
+    },
+    "Restart onboarding" : {
+
     },
     "Restart Onboarding" : {
       "localizations" : {
@@ -6289,6 +6385,12 @@
           }
         }
       }
+    },
+    "Return to command list" : {
+
+    },
+    "Returns text size to the default" : {
+
     },
     "Rewrite" : {
       "comment" : "ID for rewriting",
@@ -6378,6 +6480,9 @@
           }
         }
       }
+    },
+    "Save changes" : {
+
     },
     "Save Changes" : {
       "localizations" : {
@@ -6666,6 +6771,12 @@
         }
       }
     },
+    "Sets the global shortcut to open Writing Tools." : {
+
+    },
+    "Settings Incomplete" : {
+
+    },
     "Shortcut:" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6795,6 +6906,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Status: %@"
+          }
+        }
+      }
+    },
+    "Step %lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Step %1$lld of %2$lld"
           }
         }
       }
@@ -7616,6 +7737,9 @@
           }
         }
       }
+    },
+    "When off, custom prompts replace selected text inline." : {
+
     },
     "When unchecked, custom prompts will replace selected text inline" : {
       "localizations" : {

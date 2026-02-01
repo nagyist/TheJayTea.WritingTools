@@ -45,6 +45,7 @@ import ApplicationServices
           .font(.largeTitle)
           .bold()
           .multilineTextAlignment(.center)
+          .accessibilityAddTraits(.isHeader)
         Text(steps[currentStep].description)
           .font(.body)
           .foregroundStyle(.secondary)
@@ -63,9 +64,9 @@ import ApplicationServices
             OnboardingWelcomeStep()
           case 1:
             OnboardingPermissionsStep(
-              isAccessibilityGranted: isAccessibilityGranted,
-              isScreenRecordingGranted: isScreenRecordingGranted,
-              wantsScreenshotOCR: wantsScreenshotOCR,
+              isAccessibilityGranted: $isAccessibilityGranted,
+              isScreenRecordingGranted: $isScreenRecordingGranted,
+              wantsScreenshotOCR: $wantsScreenshotOCR,
               onRefresh: refreshPermissionStatuses,
               onOpenPrivacyPane: openPrivacyPane
             )
@@ -101,6 +102,8 @@ import ApplicationServices
               .frame(width: 10, height: 10)
           }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(currentStep + 1) of \(steps.count)")
 
         HStack {
           if currentStep > 0 {
@@ -117,7 +120,7 @@ import ApplicationServices
               withAnimation { currentStep += 1 }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(currentStep == 1 && !isAccessibilityGranted)
+            .disabled(currentStep == 1 && (!isAccessibilityGranted || (wantsScreenshotOCR && !isScreenRecordingGranted)))
           } else {
             Button("Finish") {
               saveSettingsAndFinish()
@@ -129,7 +132,7 @@ import ApplicationServices
       .padding(16)
       .background(Color(.windowBackgroundColor))
     }
-    .frame(width: 640, height: 720)
+    .frame(minWidth: 560, idealWidth: 640, maxWidth: 860, minHeight: 600, idealHeight: 720, maxHeight: 900)
     .background(
       Rectangle()
         .fill(Color.clear)
@@ -161,53 +164,8 @@ import ApplicationServices
 
   @MainActor
   private func saveSettingsAndFinish() {
-    switch settings.currentProvider {
-    case "gemini":
-      appState.saveGeminiConfig(
-        apiKey: settings.geminiApiKey,
-        model: settings.geminiModel,
-        customModelName: settings.geminiCustomModel
-      )
-    case "mistral":
-      appState.saveMistralConfig(
-        apiKey: settings.mistralApiKey,
-        baseURL: settings.mistralBaseURL,
-        model: settings.mistralModel
-      )
-    case "openai":
-      appState.saveOpenAIConfig(
-        apiKey: settings.openAIApiKey,
-        baseURL: settings.openAIBaseURL,
-        organization: settings.openAIOrganization,
-        project: settings.openAIProject,
-        model: settings.openAIModel
-      )
-    case "anthropic":
-      appState.saveAnthropicConfig(
-        apiKey: settings.anthropicApiKey,
-        model: settings.anthropicModel
-      )
-    case "openrouter":
-      appState.saveOpenRouterConfig(
-        apiKey: settings.openRouterApiKey,
-        model: OpenRouterModel(rawValue: settings.openRouterModel) ?? .gpt4o,
-        customModelName: settings.openRouterCustomModel
-      )
-    case "ollama":
-      appState.saveOllamaConfig(
-        baseURL: settings.ollamaBaseURL,
-        model: settings.ollamaModel,
-        keepAlive: settings.ollamaKeepAlive
-      )
-      UserDefaults.standard.set(
-        settings.ollamaImageMode.rawValue,
-        forKey: "ollama_image_mode"
-      )
-    default:
-      break
-    }
-
-    appState.setCurrentProvider(settings.currentProvider)
+    // Use the unified save method from AppState
+    appState.saveCurrentProviderSettings()
     settings.hasCompletedOnboarding = true
 
     if let window = NSApplication.shared.windows.first(where: {

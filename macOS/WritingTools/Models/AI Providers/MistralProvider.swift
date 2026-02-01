@@ -32,7 +32,7 @@ final class MistralProvider: AIProvider {
     var isProcessing = false
     private var config: MistralConfig
     private var aiProxyService: MistralService?
-    private var currentTask: Task<Void, Never>?
+    private var currentTask: Task<String, Error>?
     
     init(config: MistralConfig) {
         self.config = config
@@ -46,7 +46,10 @@ final class MistralProvider: AIProvider {
     
     func processText(systemPrompt: String? = "You are a helpful writing assistant.", userPrompt: String, images: [Data] = [], streaming: Bool = false) async throws -> String {
         isProcessing = true
-        defer { isProcessing = false }
+        defer {
+            isProcessing = false
+            currentTask = nil
+        }
 
         let config = self.config
         let systemPrompt = systemPrompt
@@ -54,7 +57,7 @@ final class MistralProvider: AIProvider {
         let images = images
         let streaming = streaming
 
-        return try await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             guard !config.apiKey.isEmpty else {
                 throw NSError(domain: "MistralAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "API key is missing."])
             }
@@ -115,7 +118,9 @@ final class MistralProvider: AIProvider {
                 logger.error("Could not create mistral chat completion: \(error.localizedDescription)")
                 throw error
             }
-        }.value
+        }
+        currentTask = task
+        return try await task.value
     }
     
     func cancel() {

@@ -20,6 +20,7 @@ struct AIProviderSettingsPane<SaveButton: View, CompleteSetupButton: View>: View
         VStack(alignment: .leading, spacing: 20) {
             Text("AI Provider Settings")
                 .font(.headline)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("Select AI Service")
@@ -39,6 +40,8 @@ struct AIProviderSettingsPane<SaveButton: View, CompleteSetupButton: View>: View
                 }
                 .pickerStyle(.menu)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel("AI Provider")
+                .accessibilityHint("Select which AI service to use for processing.")
                 .onChange(of: settings.currentProvider) { _, newValue in
                     if newValue == "local" && !LocalModelProvider.isAppleSilicon {
                         settings.currentProvider = "gemini"
@@ -71,6 +74,7 @@ struct AIProviderSettingsPane<SaveButton: View, CompleteSetupButton: View>: View
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .accessibilityLabel("Provider settings")
 
             if !showOnlyApiSetup {
                 saveButton

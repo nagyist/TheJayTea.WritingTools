@@ -31,11 +31,15 @@ struct CommandEditor: View {
     @State private var customProviderApiKey: String
     @State private var customProviderModel: String
 
+    // Reference to command manager for duplicate checking
+    private var commandManager: CommandManager?
+
     init(command: Binding<CommandModel>, onSave: @escaping () -> Void, onCancel: @escaping () -> Void, commandManager: CommandManager? = nil) {
         self._command = command
         self.onSave = onSave
         self.onCancel = onCancel
         self.isBuiltIn = command.wrappedValue.isBuiltIn
+        self.commandManager = commandManager
 
         _name = State(initialValue: command.wrappedValue.name)
         _prompt = State(initialValue: command.wrappedValue.prompt)
@@ -70,6 +74,8 @@ struct CommandEditor: View {
                 }
                 .buttonStyle(.plain)
                 .help("Cancel")
+                .accessibilityLabel("Close editor")
+                .accessibilityHint("Discard changes and close")
             }
             .padding(.horizontal)
             .padding(.top, 16)
@@ -108,7 +114,7 @@ struct CommandEditor: View {
             .padding([.horizontal, .bottom], 20)
             .padding(.top, 6)
         }
-        .frame(width: 900, height: 600)
+        .frame(minWidth: 720, idealWidth: 900, maxWidth: 1100, minHeight: 520, idealHeight: 600, maxHeight: 900)
         .windowBackground(useGradient: settings.useGradientTheme)
         .sheet(isPresented: $showingIconPicker) {
             IconPickerView(selectedIcon: $selectedIcon)
@@ -295,6 +301,21 @@ struct CommandEditor: View {
     // MARK: - Save Command
 
     private func saveCommand() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Check for duplicate command names (excluding the current command)
+        if let manager = commandManager {
+            let isDuplicate = manager.commands.contains { existingCommand in
+                existingCommand.id != command.id &&
+                existingCommand.name.lowercased() == trimmedName.lowercased()
+            }
+
+            if isDuplicate {
+                showDuplicateAlert = true
+                return
+            }
+        }
+
         if !hasShortcut {
             KeyboardShortcuts.reset(.commandShortcut(for: command.id))
         }

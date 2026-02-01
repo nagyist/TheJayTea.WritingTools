@@ -36,7 +36,7 @@ final class OpenRouterProvider: AIProvider {
     
     private var config: OpenRouterConfig
     private var aiProxyService: OpenRouterService?
-    private var currentTask: Task<Void, Never>?
+    private var currentTask: Task<String, Error>?
     
     init(config: OpenRouterConfig) {
         self.config = config
@@ -55,7 +55,10 @@ final class OpenRouterProvider: AIProvider {
         streaming: Bool = false
     ) async throws -> String {
         isProcessing = true
-        defer { isProcessing = false }
+        defer {
+            isProcessing = false
+            currentTask = nil
+        }
 
         let config = self.config
         let systemPrompt = systemPrompt
@@ -63,7 +66,7 @@ final class OpenRouterProvider: AIProvider {
         let images = images
         let streaming = streaming
 
-        return try await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             guard !config.apiKey.isEmpty else {
                 throw NSError(
                     domain: "OpenRouterAPI",
@@ -127,7 +130,9 @@ final class OpenRouterProvider: AIProvider {
                 logger.error("OpenRouter request failed: \(error.localizedDescription)")
                 throw error
             }
-        }.value
+        }
+        currentTask = task
+        return try await task.value
     }
     
     

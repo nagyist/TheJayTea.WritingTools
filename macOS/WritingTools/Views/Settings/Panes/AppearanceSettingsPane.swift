@@ -17,6 +17,7 @@ struct AppearanceSettingsPane<SaveButton: View>: View {
         VStack(alignment: .leading, spacing: 24) {
             Text("Appearance Settings")
                 .font(.headline)
+                .accessibilityAddTraits(.isHeader)
             
             VStack(alignment: .leading, spacing: 12) {
                 Text("Window Style")
@@ -35,6 +36,8 @@ struct AppearanceSettingsPane<SaveButton: View>: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.vertical, 4)
+                .accessibilityLabel("Theme")
+                .accessibilityHint("Choose how Writing Tools windows are styled.")
                 .onChange(of: settings.themeStyle) { _, _ in
                     needsSaving = true
                 }

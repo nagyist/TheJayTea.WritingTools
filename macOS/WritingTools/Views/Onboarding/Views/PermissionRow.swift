@@ -56,6 +56,7 @@ struct PermissionRow: View {
     .padding(12)
     .background(Color(.controlBackgroundColor))
     .clipShape(.rect(cornerRadius: 10))
+    .accessibilityElement(children: .combine)
   }
 
   @ViewBuilder
@@ -70,5 +71,6 @@ struct PermissionRow: View {
         .font(.caption)
         .foregroundStyle(.secondary)
     }
+    .accessibilityLabel(status == .granted ? "Granted" : "Required")
   }
 }

@@ -10,9 +10,9 @@ import ApplicationServices
 import CoreGraphics
 
 struct OnboardingPermissionsStep: View {
-  @State var isAccessibilityGranted: Bool
-  @State var isScreenRecordingGranted: Bool
-  @State var wantsScreenshotOCR: Bool
+  @Binding var isAccessibilityGranted: Bool
+  @Binding var isScreenRecordingGranted: Bool
+  @Binding var wantsScreenshotOCR: Bool
 
   var onRefresh: () -> Void
   var onOpenPrivacyPane: (String) -> Void
@@ -21,6 +21,7 @@ struct OnboardingPermissionsStep: View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Required")
         .font(.headline)
+        .accessibilityAddTraits(.isHeader)
 
       PermissionRow(
         icon: "figure.wave.circle.fill",
@@ -58,6 +59,8 @@ struct OnboardingPermissionsStep: View {
         }
       }
       .toggleStyle(.switch)
+      .accessibilityLabel("Enable Screenshot OCR")
+      .accessibilityHint("Requires Screen Recording permission to use OCR on screenshots.")
 
       if wantsScreenshotOCR {
         PermissionRow(
@@ -88,6 +91,7 @@ struct OnboardingPermissionsStep: View {
         VStack(alignment: .leading, spacing: 8) {
           Text("Notes")
             .font(.headline)
+            .accessibilityAddTraits(.isHeader)
           VStack(alignment: .leading, spacing: 6) {
             Label(
               "You can revoke any permission later in System Settings.",
@@ -108,6 +112,7 @@ struct OnboardingPermissionsStep: View {
           onRefresh()
         }
         .buttonStyle(.bordered)
+        .accessibilityLabel("Refresh permission status")
         .help("Recheck current permission statuses.")
 
         Spacer()
@@ -121,6 +126,7 @@ struct OnboardingPermissionsStep: View {
           )
         }
         .buttonStyle(.link)
+        .accessibilityLabel("Open Privacy and Security settings")
         .help("Open System Settings to manage permissions.")
       }
       .padding(.top, 4)

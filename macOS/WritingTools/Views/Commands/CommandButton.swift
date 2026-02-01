@@ -64,6 +64,8 @@ struct CommandButton: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Delete \(command.name)")
+                    .accessibilityHint("Removes this command")
                     
                     Spacer()
                     
@@ -74,6 +76,8 @@ struct CommandButton: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Edit \(command.name)")
+                    .accessibilityHint("Edit this command's details")
                 }
                 .frame(maxWidth: 140)
                 .padding(.horizontal, 8)

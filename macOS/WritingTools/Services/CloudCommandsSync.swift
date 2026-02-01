@@ -22,6 +22,8 @@ final class CloudCommandsSync {
 
   private var started = false
   private var isApplyingCloudChange = false
+  private var syncInProgress = false
+  private var pendingSync = false
 
   private var commandsChangedObserver: NSObjectProtocol?
   private var kvsObserver: NSObjectProtocol?
@@ -41,7 +43,7 @@ final class CloudCommandsSync {
     started = true
 
     // Initial pull from iCloud if remote is newer
-    pullFromICloudIfNewer()
+    schedulePull()
 
     // Listen for your app's commands change notification
     commandsChangedObserver = NotificationCenter.default.addObserver(
@@ -112,7 +114,27 @@ final class CloudCommandsSync {
 
   // MARK: - Pull iCloud -> local (if newer)
 
-  private func pullFromICloudIfNewer() {
+  private func schedulePull() {
+    if syncInProgress {
+      pendingSync = true
+      return
+    }
+
+    syncInProgress = true
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      defer {
+        self.syncInProgress = false
+        if self.pendingSync {
+          self.pendingSync = false
+          self.schedulePull()
+        }
+      }
+      await self.pullFromICloudIfNewer()
+    }
+  }
+
+  private func pullFromICloudIfNewer() async {
     guard let remoteMTime = store.object(forKey: mtimeKey) as? Date else {
       return
     }
@@ -129,10 +151,10 @@ final class CloudCommandsSync {
       let remoteCommands = try JSONDecoder().decode([CommandModel].self, from: data)
 
       isApplyingCloudChange = true
+      defer { isApplyingCloudChange = false }
+
       AppState.shared.commandManager.replaceAllCommands(with: remoteCommands)
       UserDefaults.standard.set(remoteMTime, forKey: localMTimeKey)
-      isApplyingCloudChange = false
-
     } catch {
       logger.error("CloudCommandsSync: decode error: \(error.localizedDescription)")
     }
@@ -155,7 +177,7 @@ final class CloudCommandsSync {
         userInfo[NSUbiquitousKeyValueStoreChangedKeysKey] as? [String],
       changedKeys.contains(where: { $0 == dataKey || $0 == mtimeKey })
     {
-      pullFromICloudIfNewer()
+      schedulePull()
     }
   }
 }

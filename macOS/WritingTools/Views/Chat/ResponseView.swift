@@ -111,6 +111,8 @@ struct ResponseView: View {
                     .buttonStyle(.borderless)
                     .disabled(viewModel.fontSize <= 10)
                     .keyboardShortcut("-", modifiers: .command)
+                    .accessibilityLabel("Decrease text size")
+                    .accessibilityHint("Makes the response text smaller")
                     
                     Button(action: { viewModel.fontSize += 1 }) {
                         Label("Increase text size", systemImage: "textformat.size.larger")
@@ -119,6 +121,8 @@ struct ResponseView: View {
                     .buttonStyle(.borderless)
                     .disabled(viewModel.fontSize >= 20)
                     .keyboardShortcut("+", modifiers: .command)
+                    .accessibilityLabel("Increase text size")
+                    .accessibilityHint("Makes the response text larger")
                     
                     Button(action: {
                         viewModel.fontSize = 14
@@ -128,6 +132,8 @@ struct ResponseView: View {
                     }
                     .buttonStyle(.borderless)
                     .keyboardShortcut("r", modifiers: .command)
+                    .accessibilityLabel("Reset text size")
+                    .accessibilityHint("Returns text size to the default")
                 }
             }
             .padding()
@@ -192,6 +198,7 @@ struct ResponseView: View {
                             onSubmit: sendMessage
                         )
                         .disabled(viewModel.isProcessing)
+                        .accessibilityLabel("Follow-up question")
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
@@ -290,6 +297,8 @@ struct ChatMessageView: View {
                 }
                 .buttonStyle(.plain)
                 .help(showCopiedFeedback ? "" : "Copy Message")
+                .accessibilityLabel("Copy message")
+                .accessibilityHint("Copies this message to the clipboard")
             }
             .padding(.bottom, 2)
         }
@@ -314,48 +323,63 @@ struct ChatMessageView: View {
 @MainActor
 @Observable
 final class ResponseViewModel {
-    
+
     // UserDefaults key for persistent font size storage
     private static let fontSizeKey = "ResponseView.fontSize"
     private static let defaultFontSize: CGFloat = 14
-    
+
     var messages: [ChatMessage] = []
     var fontSize: CGFloat = 14 {
-            didSet {
-                // Save font size to UserDefaults whenever it changes
-                UserDefaults.standard.set(fontSize, forKey: Self.fontSizeKey)
-            }
+        didSet {
+            // Debounce font size saves to prevent race conditions from rapid slider changes
+            scheduleFontSizeSave()
+        }
     }
     var showCopyConfirmation = false
     var isProcessing = false
-    
+
     private let content: String
     private let selectedText: String
     private let option: WritingOption?
     private let provider: any AIProvider
-    
+
     // Store conversation history for context
     private var conversationHistory: [(role: String, content: String)] = []
-    
+
+    // Debounce task for font size persistence
+    @ObservationIgnored
+    private var fontSizeSaveTask: Task<Void, Never>?
+
     init(content: String, selectedText: String, option: WritingOption?, provider: any AIProvider) {
         // 🔧 Normalize markdown content (strip outer code blocks + normalize LaTeX)
         self.content = content.normalizedForMarkdown()
         self.selectedText = selectedText
         self.option = option
         self.provider = provider
-        
+
         // Load saved font size from UserDefaults, or use default
         let savedFontSize = UserDefaults.standard.object(forKey: Self.fontSizeKey) as? CGFloat
         self.fontSize = savedFontSize ?? Self.defaultFontSize
-        
+
         // Add initial assistant message
         messages.append(ChatMessage(role: "assistant", content: self.content))
-        
+
         // Initialize conversation history
         if !selectedText.isEmpty {
             conversationHistory.append((role: "user", content: selectedText))
         }
         conversationHistory.append((role: "assistant", content: self.content))
+    }
+
+    /// Debounced save of font size to UserDefaults
+    private func scheduleFontSizeSave() {
+        fontSizeSaveTask?.cancel()
+        fontSizeSaveTask = Task { @MainActor [weak self] in
+            // Wait 300ms before saving to debounce rapid slider movements
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self else { return }
+            UserDefaults.standard.set(self.fontSize, forKey: Self.fontSizeKey)
+        }
     }
     
     func processFollowUpQuestion(_ question: String) async throws {

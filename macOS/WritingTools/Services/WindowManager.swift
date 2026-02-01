@@ -92,8 +92,8 @@ class WindowManager: NSObject, NSWindowDelegate {
                 self.onboardingWindow.keyEnumerator().nextObject() as? NSWindow
 
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
-                styleMask: [.titled, .closable],
+                contentRect: NSRect(x: 0, y: 0, width: 560, height: 520),
+                styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
             )
@@ -101,6 +101,7 @@ class WindowManager: NSObject, NSWindowDelegate {
             settingsWindow.title = "Complete Setup"
             settingsWindow.identifier = NSUserInterfaceItemIdentifier("SettingsWindow")
             settingsWindow.isReleasedWhenClosed = false
+            settingsWindow.minSize = NSSize(width: 520, height: 440)
 
             let settingsView =
                 SettingsView(appState: appState, showOnlyApiSetup: true)
@@ -136,6 +137,52 @@ class WindowManager: NSObject, NSWindowDelegate {
             window.identifier = NSUserInterfaceItemIdentifier("OnboardingWindow")
             
             window.center()
+        }
+    }
+
+    func registerSettingsWindow(
+        _ window: NSWindow,
+        hostingView: NSHostingView<SettingsView>
+    ) {
+        performOnMainThread { [weak self] in
+            guard let self = self else { return }
+            self.settingsWindow.removeAllObjects()
+            self.settingsWindow.setObject(hostingView, forKey: window)
+            window.delegate = self
+            window.identifier = NSUserInterfaceItemIdentifier("SettingsWindow")
+        }
+    }
+
+    func closeSettingsWindow() {
+        performOnMainThread { [weak self] in
+            guard let self = self else { return }
+            if let window = self.settingsWindow.keyEnumerator().nextObject() as? NSWindow {
+                window.close()
+                self.settingsWindow.removeAllObjects()
+            }
+        }
+    }
+
+    func showOnboarding(appState: AppState, title: String = "Welcome to Writing Tools") {
+        performOnMainThread {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 640, height: 720),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = title
+            window.isReleasedWhenClosed = false
+            window.minSize = NSSize(width: 560, height: 600)
+
+            let onboardingView = OnboardingView(appState: appState)
+            let hostingView = NSHostingView(rootView: onboardingView)
+            window.contentView = hostingView
+            window.level = .floating
+
+            self.setOnboardingWindow(window, hostingView: hostingView)
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
         }
     }
 

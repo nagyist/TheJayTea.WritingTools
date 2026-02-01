@@ -1,5 +1,6 @@
 import SwiftUI
 import Observation
+import Combine
 
 class PopupWindow: NSWindow {
   private var initialLocation: NSPoint?
@@ -7,6 +8,10 @@ class PopupWindow: NSWindow {
   private var trackingArea: NSTrackingArea?
   private let appState: AppState
   private let windowWidth: CGFloat = 305
+
+  // Track observation tasks for proper cancellation
+  private var commandObservationTask: Task<Void, Never>?
+  private var editModeObservationTask: Task<Void, Never>?
 
   private let viewModel = PopupViewModel()
   init(appState: AppState) {
@@ -149,6 +154,9 @@ class PopupWindow: NSWindow {
   }
 
   func cleanup() {
+    // Cancel observation tasks to prevent memory leaks
+    cancelObservations()
+
     if let contentView = contentView, let trackingArea = trackingArea {
       contentView.removeTrackingArea(trackingArea)
       self.trackingArea = nil
@@ -265,25 +273,57 @@ class PopupWindow: NSWindow {
 
 extension PopupWindow {
   private func observeCommandChanges() {
-    withObservationTracking { [weak self] in
-      _ = self?.appState.commandManager.commands
-    } onChange: { [weak self] in
-      Task { @MainActor in
-        self?.updateWindowSize()
-        self?.observeCommandChanges()
+    // Cancel any existing observation task to prevent leaks
+    commandObservationTask?.cancel()
+
+    commandObservationTask = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        guard let self else { return }
+
+        // Set up tracking for the next change
+        let hasChanged = await withCheckedContinuation { continuation in
+          withObservationTracking {
+            _ = self.appState.commandManager.commands
+          } onChange: {
+            continuation.resume(returning: true)
+          }
+        }
+
+        guard hasChanged, !Task.isCancelled else { break }
+        self.updateWindowSize()
       }
     }
   }
 
   private func observeEditModeChanges() {
-    withObservationTracking { [weak self] in
-      _ = self?.viewModel.isEditMode
-    } onChange: { [weak self] in
-      Task { @MainActor in
-        self?.updateWindowSize()
-        self?.observeEditModeChanges()
+    // Cancel any existing observation task to prevent leaks
+    editModeObservationTask?.cancel()
+
+    editModeObservationTask = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        guard let self else { return }
+
+        // Set up tracking for the next change
+        let hasChanged = await withCheckedContinuation { continuation in
+          withObservationTracking {
+            _ = self.viewModel.isEditMode
+          } onChange: {
+            continuation.resume(returning: true)
+          }
+        }
+
+        guard hasChanged, !Task.isCancelled else { break }
+        self.updateWindowSize()
       }
     }
+  }
+
+  /// Call this to stop all observation tasks (call in cleanup)
+  private func cancelObservations() {
+    commandObservationTask?.cancel()
+    commandObservationTask = nil
+    editModeObservationTask?.cancel()
+    editModeObservationTask = nil
   }
 }
 

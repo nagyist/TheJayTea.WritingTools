@@ -4,6 +4,7 @@ import Foundation
 struct PromptStructure: Codable, Equatable {
     var role: String
     var task: String
+    var criticalInstruction: String?
     var rules: Rules
     var errorHandling: ErrorHandling?
 
@@ -238,6 +239,7 @@ struct PromptStructure: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case role, task, rules
+        case criticalInstruction = "critical_instruction"
         case errorHandling = "error_handling"
         case style, constraints
         case qualityCriteria = "quality_criteria"
@@ -258,6 +260,7 @@ struct PromptStructure: Codable, Equatable {
     init(
         role: String,
         task: String,
+        criticalInstruction: String? = nil,
         rules: Rules,
         errorHandling: ErrorHandling? = nil,
         style: Style? = nil,
@@ -269,6 +272,7 @@ struct PromptStructure: Codable, Equatable {
     ) {
         self.role = role
         self.task = task
+        self.criticalInstruction = criticalInstruction
         self.rules = rules
         self.errorHandling = errorHandling
         self.style = style

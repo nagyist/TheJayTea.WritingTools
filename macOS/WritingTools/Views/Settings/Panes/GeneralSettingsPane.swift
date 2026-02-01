@@ -39,6 +39,8 @@ struct GeneralSettingsPane<SaveButton: View>: View {
                                 needsSaving = true
                             }
                         )
+                        .accessibilityLabel("Activate Writing Tools shortcut")
+                        .accessibilityHint("Sets the global shortcut to open Writing Tools.")
                         .help("Choose a convenient key combination to bring up Writing Tools from anywhere.")
                     }
                     .padding(.vertical, 2)
@@ -65,6 +67,8 @@ struct GeneralSettingsPane<SaveButton: View>: View {
                         .clipShape(.rect(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Manage Commands")
+                    .accessibilityHint("Open the Commands Manager to add, edit, or remove commands.")
                     .help("Open the Commands Manager to add, edit, or remove commands.")
 
                     Toggle(isOn: $settings.openCustomCommandsInResponseWindow) {
@@ -77,6 +81,8 @@ struct GeneralSettingsPane<SaveButton: View>: View {
                     }
                     .toggleStyle(.checkbox)
                     .padding(.top, 4)
+                    .accessibilityLabel("Open custom prompts in response window")
+                    .accessibilityHint("When off, custom prompts replace selected text inline.")
                     .onChange(of: settings.openCustomCommandsInResponseWindow) { _, _ in
                         needsSaving = true
                     }
@@ -97,6 +103,8 @@ struct GeneralSettingsPane<SaveButton: View>: View {
                             Label("Restart Onboarding", systemImage: "arrow.counterclockwise")
                         }
                         .buttonStyle(.bordered)
+                        .accessibilityLabel("Restart onboarding")
+                        .accessibilityHint("Open the onboarding window to review permissions and setup.")
                         .help("Open the onboarding window to set up WritingTools again.")
 
                         Spacer()
@@ -118,31 +126,7 @@ struct GeneralSettingsPane<SaveButton: View>: View {
     private func restartOnboarding() {
         // Mark onboarding as not completed
         settings.hasCompletedOnboarding = false
-
-        // Create the onboarding window the same way AppDelegate does
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Onboarding"
-        window.isReleasedWhenClosed = false
-        
-        let onboardingView = OnboardingView(appState: appState)
-        let hostingView = NSHostingView(rootView: onboardingView)
-        window.contentView = hostingView
-        window.level = .floating
-
-        // Register with WindowManager properly
-        WindowManager.shared.setOnboardingWindow(window, hostingView: hostingView)
-        window.makeKeyAndOrderFront(nil)
-
-        // Optionally close Settings to reduce window clutter
-        if let settingsWindow = NSApplication.shared.windows.first(where: {
-            $0.contentView?.subviews.contains(where: { $0 is NSHostingView<SettingsView> }) ?? false
-        }) {
-            settingsWindow.close()
-        }
+        WindowManager.shared.showOnboarding(appState: appState, title: "Onboarding")
+        WindowManager.shared.closeSettingsWindow()
     }
 }

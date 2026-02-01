@@ -36,6 +36,7 @@ private struct GenerateChunk: Decodable {
 final class OllamaProvider: AIProvider {
     var isProcessing = false
     private var config: OllamaConfig
+    private var currentTask: Task<String, Error>?
 
     init(config: OllamaConfig) {
         self.config = config
@@ -50,7 +51,10 @@ final class OllamaProvider: AIProvider {
         streaming: Bool = false
     ) async throws -> String {
         isProcessing = true
-        defer { isProcessing = false }
+        defer {
+            isProcessing = false
+            currentTask = nil
+        }
 
         let config = self.config
         let systemPrompt = systemPrompt
@@ -59,7 +63,7 @@ final class OllamaProvider: AIProvider {
         let streaming = streaming
         let imageMode = AppSettings.shared.ollamaImageMode
 
-        return try await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             // 1) Build combined prompt: system message + user input
             var combinedPrompt = ""
 
@@ -110,17 +114,24 @@ final class OllamaProvider: AIProvider {
             request.httpBody = jsonData
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.timeoutInterval = 60
 
-            // 4) Execute request
-            if streaming {
-                return try await Self.performStreaming(request)
-            } else {
-                return try await Self.performOneShot(request)
+            // 4) Execute request with retry for transient failures
+            return try await withRetry(config: .default) {
+                if streaming {
+                    return try await Self.performStreaming(request)
+                } else {
+                    return try await Self.performOneShot(request)
+                }
             }
-        }.value
+        }
+        currentTask = task
+        return try await task.value
     }
 
     func cancel() {
+        currentTask?.cancel()
+        currentTask = nil
         isProcessing = false
     }
 
@@ -164,6 +175,9 @@ final class OllamaProvider: AIProvider {
         }
 
         for try await line in stream.lines {
+            if Task.isCancelled {
+                break
+            }
             guard let data = line.data(using: .utf8) else { continue }
             if let chunk = try? JSONDecoder().decode(GenerateChunk.self, from: data) {
                 if let t = chunk.response { aggregate += t }
@@ -179,12 +193,29 @@ final class OllamaProvider: AIProvider {
     // MARK: - Utilities
 
     nonisolated private static func makeEndpointURL(_ baseURL: String, path: String) -> URL? {
-        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let noSlash = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let root: String = noSlash.hasSuffix("api")
-            ? String(noSlash.dropLast(3)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            : noSlash
-        let full = root + "/api" + path
+        // Normalize the base URL properly to avoid double-slashes
+        var trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Remove trailing slashes
+        while trimmed.hasSuffix("/") {
+            trimmed = String(trimmed.dropLast())
+        }
+
+        // Remove "/api" suffix if present (we'll add it back consistently)
+        if trimmed.lowercased().hasSuffix("/api") {
+            trimmed = String(trimmed.dropLast(4))
+        } else if trimmed.lowercased().hasSuffix("api") && !trimmed.contains("://api") {
+            // Handle case where it's just "api" at end without slash (but not part of protocol)
+            trimmed = String(trimmed.dropLast(3))
+        }
+
+        // Remove any trailing slashes that might have been exposed
+        while trimmed.hasSuffix("/") {
+            trimmed = String(trimmed.dropLast())
+        }
+
+        // Build the final URL
+        let full = trimmed + "/api" + path
         return URL(string: full)
     }
 

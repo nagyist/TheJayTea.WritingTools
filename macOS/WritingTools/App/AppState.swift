@@ -17,6 +17,12 @@ final class AppState {
     var localLLMProvider: LocalModelProvider
     var openRouterProvider: OpenRouterProvider
 
+    // Cache for providers with model overrides to prevent memory leaks
+    // Key: "providerName:model" -> Provider instance
+    @ObservationIgnored
+    private var modelOverrideProviderCache: [String: any AIProvider] = [:]
+    private let maxCacheSize = 10
+
     var customInstruction: String = ""
     var selectedText: String = ""
     var isPopupVisible: Bool = false
@@ -107,9 +113,17 @@ final class AppState {
         }
     }
 
-    /// Create a provider instance with a specific model override
+    /// Create or retrieve a cached provider instance with a specific model override
     private func createProviderWithModel(providerName: String, model: String) -> any AIProvider {
+        let cacheKey = "\(providerName):\(model)"
+
+        // Return cached provider if available
+        if let cached = modelOverrideProviderCache[cacheKey] {
+            return cached
+        }
+
         let asettings = AppSettings.shared
+        let provider: any AIProvider
 
         switch providerName {
         case "openai":
@@ -118,21 +132,21 @@ final class AppState {
                 baseURL: asettings.openAIBaseURL,
                 model: model
             )
-            return OpenAIProvider(config: config)
+            provider = OpenAIProvider(config: config)
 
         case "gemini":
             let config = GeminiConfig(
                 apiKey: asettings.geminiApiKey,
                 modelName: model
             )
-            return GeminiProvider(config: config)
+            provider = GeminiProvider(config: config)
 
         case "anthropic":
             let config = AnthropicConfig(
                 apiKey: asettings.anthropicApiKey,
                 model: model
             )
-            return AnthropicProvider(config: config)
+            provider = AnthropicProvider(config: config)
 
         case "ollama":
             let config = OllamaConfig(
@@ -140,7 +154,7 @@ final class AppState {
                 model: model,
                 keepAlive: asettings.ollamaKeepAlive
             )
-            return OllamaProvider(config: config)
+            provider = OllamaProvider(config: config)
 
         case "mistral":
             let config = MistralConfig(
@@ -148,14 +162,14 @@ final class AppState {
                 baseURL: asettings.mistralBaseURL,
                 model: model
             )
-            return MistralProvider(config: config)
+            provider = MistralProvider(config: config)
 
         case "openrouter":
             let config = OpenRouterConfig(
                 apiKey: asettings.openRouterApiKey,
                 model: model
             )
-            return OpenRouterProvider(config: config)
+            provider = OpenRouterProvider(config: config)
 
         case "local":
             return localLLMProvider
@@ -163,6 +177,22 @@ final class AppState {
         default:
             return activeProvider
         }
+
+        // Evict oldest entries if cache is full (simple FIFO)
+        if modelOverrideProviderCache.count >= maxCacheSize {
+            if let firstKey = modelOverrideProviderCache.keys.first {
+                modelOverrideProviderCache.removeValue(forKey: firstKey)
+            }
+        }
+
+        // Cache the new provider
+        modelOverrideProviderCache[cacheKey] = provider
+        return provider
+    }
+
+    /// Clear the model override provider cache (call when settings change)
+    func clearProviderCache() {
+        modelOverrideProviderCache.removeAll()
     }
 
     private init() {
@@ -251,6 +281,7 @@ final class AppState {
         let modelName = (model == .custom) ? (customModelName ?? "") : model.rawValue
         let config = GeminiConfig(apiKey: apiKey, modelName: modelName)
         geminiProvider = GeminiProvider(config: config)
+        clearProviderCache()
     }
 
     // For OpenAI changes
@@ -264,6 +295,7 @@ final class AppState {
 
         let config = OpenAIConfig(apiKey: apiKey, baseURL: baseURL, model: model)
         openAIProvider = OpenAIProvider(config: config)
+        clearProviderCache()
     }
 
     // Update provider and persist to settings
@@ -284,6 +316,7 @@ final class AppState {
             model: model
         )
         mistralProvider = MistralProvider(config: config)
+        clearProviderCache()
     }
 
     // For Anthropic changes
@@ -294,6 +327,7 @@ final class AppState {
 
         let config = AnthropicConfig(apiKey: apiKey, model: model)
         anthropicProvider = AnthropicProvider(config: config)
+        clearProviderCache()
         logger.debug("Anthropic config saved and provider updated.")
     }
 
@@ -306,6 +340,7 @@ final class AppState {
 
         let config = OllamaConfig(baseURL: baseURL, model: model, keepAlive: keepAlive)
         ollamaProvider = OllamaProvider(config: config)
+        clearProviderCache()
     }
 
     // For updating OpenRouter settings
@@ -318,8 +353,59 @@ final class AppState {
         let modelName = (model == .custom) ? (customModelName ?? "") : model.rawValue
         let config = OpenRouterConfig(apiKey: apiKey, model: modelName)
         openRouterProvider = OpenRouterProvider(config: config)
+        clearProviderCache()
     }
 
+    /// Saves provider settings based on the currently selected provider
+    /// This is a unified method to reduce code duplication between OnboardingView and SettingsView
+    func saveCurrentProviderSettings() {
+        let settings = AppSettings.shared
+
+        switch settings.currentProvider {
+        case "gemini":
+            saveGeminiConfig(
+                apiKey: settings.geminiApiKey,
+                model: settings.geminiModel,
+                customModelName: settings.geminiCustomModel
+            )
+        case "mistral":
+            saveMistralConfig(
+                apiKey: settings.mistralApiKey,
+                baseURL: settings.mistralBaseURL,
+                model: settings.mistralModel
+            )
+        case "openai":
+            saveOpenAIConfig(
+                apiKey: settings.openAIApiKey,
+                baseURL: settings.openAIBaseURL,
+                organization: settings.openAIOrganization,
+                project: settings.openAIProject,
+                model: settings.openAIModel
+            )
+        case "anthropic":
+            saveAnthropicConfig(
+                apiKey: settings.anthropicApiKey,
+                model: settings.anthropicModel
+            )
+        case "openrouter":
+            saveOpenRouterConfig(
+                apiKey: settings.openRouterApiKey,
+                model: OpenRouterModel(rawValue: settings.openRouterModel) ?? .gpt4o,
+                customModelName: settings.openRouterCustomModel
+            )
+        case "ollama":
+            saveOllamaConfig(
+                baseURL: settings.ollamaBaseURL,
+                model: settings.ollamaModel,
+                keepAlive: settings.ollamaKeepAlive
+            )
+            UserDefaults.standard.set(settings.ollamaImageMode.rawValue, forKey: "ollama_image_mode")
+        default:
+            break
+        }
+
+        setCurrentProvider(settings.currentProvider)
+    }
 
     // Process a command (unified method for all command types)
     func processCommand(_ command: CommandModel) {
@@ -388,7 +474,10 @@ final class AppState {
 
         // Reactivate previous application
         if let previousApp = previousApplication {
-            previousApp.activate()
+            let didActivate = previousApp.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            if !didActivate {
+                logger.warning("Failed to activate previous app: \(previousApp.bundleIdentifier ?? "unknown")")
+            }
 
             // Wait for window activation, paste, then restore clipboard
             activateWindowAndPaste(for: previousApp, clipboardSnapshot: clipboardSnapshot)
@@ -403,6 +492,11 @@ final class AppState {
             var attempts = 0
 
             while true {
+                if Task.isCancelled {
+                    logger.debug("Paste operation cancelled before activation")
+                    return
+                }
+
                 let isFrontmost =
                     NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.bundleIdentifier
                 if isFrontmost || attempts >= maxAttempts || Date().timeIntervalSince(startTime) >= 2.0 {
@@ -410,16 +504,30 @@ final class AppState {
                     self.simulatePaste()
 
                     // Wait a moment for the paste to complete, then restore the clipboard
-                    try? await Task.sleep(for: .milliseconds(100))
+                    do {
+                        try await Task.sleep(for: .milliseconds(100))
+                    } catch {
+                        logger.debug("Paste delay interrupted: \(error.localizedDescription)")
+                    }
 
                     // Restore the original clipboard content
-                    NSPasteboard.general.restore(snapshot: clipboardSnapshot)
-                    logger.debug("Clipboard restored after paste")
+                    let restored = NSPasteboard.general.restore(snapshot: clipboardSnapshot)
+                    if restored {
+                        logger.debug("Clipboard restored after paste")
+                    } else {
+                        logger.error("Clipboard restore failed after paste")
+                        self.showClipboardRestoreFailedAlert(targetApp: app)
+                    }
                     break
                 }
 
                 attempts += 1
-                try? await Task.sleep(for: .milliseconds(10))
+                do {
+                    try await Task.sleep(for: .milliseconds(10))
+                } catch {
+                    logger.debug("Paste activation wait interrupted: \(error.localizedDescription)")
+                    return
+                }
             }
         }
     }
@@ -469,7 +577,10 @@ final class AppState {
         pb.writeObjects([item])
 
         if let previous = previousApplication {
-            previous.activate()
+            let didActivate = previous.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            if !didActivate {
+                logger.warning("Failed to activate previous app: \(previous.bundleIdentifier ?? "unknown")")
+            }
             activateWindowAndPaste(for: previous, clipboardSnapshot: clipboardSnapshot)
         }
     }
@@ -499,6 +610,17 @@ final class AppState {
         // Post to cgSessionEventTap for more predictable ordering
         keyDown.post(tap: .cgSessionEventTap)
         keyUp.post(tap: .cgSessionEventTap)
+    }
+
+    private func showClipboardRestoreFailedAlert(targetApp: NSRunningApplication) {
+        let alert = NSAlert()
+        alert.messageText = "Clipboard Restore Failed"
+        let bundleId = targetApp.bundleIdentifier ?? "unknown app"
+        alert.informativeText =
+            "Writing Tools couldn't restore your clipboard after pasting into \(bundleId). You may need to re-copy your previous clipboard contents."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }
 

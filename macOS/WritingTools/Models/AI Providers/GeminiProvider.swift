@@ -35,7 +35,7 @@ final class GeminiProvider: AIProvider {
     var isProcessing = false
     private var config: GeminiConfig
     private var aiProxyService: GeminiService?
-    private var currentTask: Task<Void, Never>?
+    private var currentTask: Task<String, Error>?
     
     init(config: GeminiConfig) {
         self.config = config
@@ -49,14 +49,17 @@ final class GeminiProvider: AIProvider {
     
     func processText(systemPrompt: String? = "You are a helpful writing assistant.", userPrompt: String, images: [Data] = [], streaming: Bool = false) async throws -> String {
         isProcessing = true
-        defer { isProcessing = false }
+        defer {
+            isProcessing = false
+            currentTask = nil
+        }
 
         let config = self.config
         let systemPrompt = systemPrompt
         let userPrompt = userPrompt
         let images = images
 
-        return try await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             guard !config.apiKey.isEmpty else {
                 throw NSError(domain: "GeminiAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "API key is missing."])
             }
@@ -105,7 +108,9 @@ final class GeminiProvider: AIProvider {
                 logger.error("Gemini request failed: \(error.localizedDescription)")
                 throw error
             }
-        }.value
+        }
+        currentTask = task
+        return try await task.value
     }
     
     func cancel() {

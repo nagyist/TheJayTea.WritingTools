@@ -16,7 +16,12 @@ struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .general
     @State private var needsSaving: Bool = false
     @State private var showingCommandsManager = false
-    
+    @State private var hostingWindow: NSWindow?
+
+    // Validation alert state
+    @State private var showingValidationAlert = false
+    @State private var validationAlertMessage = ""
+
     var showOnlyApiSetup: Bool = false
     
     enum SettingsTab: String, CaseIterable, Identifiable {
@@ -77,8 +82,11 @@ struct SettingsView: View {
             }
             .padding(20)
         }
-        .frame(width: 540, height: showOnlyApiSetup ? 470 : 540)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(minWidth: 520, idealWidth: 540, maxWidth: 720, minHeight: 440, idealHeight: showOnlyApiSetup ? 470 : 540, maxHeight: 820)
+        .background(WindowAccessor { window in
+            hostingWindow = window
+            updateWindowTitle(to: selectedTab)
+        })
         .windowBackground(useGradient: settings.useGradientTheme)
         .onAppear(perform: restoreLastTab)
         .onChange(of: selectedTab) { _, newValue in
@@ -88,6 +96,11 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("CommandsChanged"))) { _ in
             needsSaving = true
+        }
+        .alert("Settings Incomplete", isPresented: $showingValidationAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(validationAlertMessage)
         }
     }
     
@@ -101,14 +114,7 @@ struct SettingsView: View {
     
     private func updateWindowTitle(to tab: SettingsTab) {
         Task { @MainActor in
-            if let window = NSApp.windows.first(where: {
-                $0.contentView?
-                    .subviews
-                    .contains(where: { $0 is NSHostingView<SettingsView> })
-                ?? false
-            }) {
-                window.title = "\(tab.rawValue) Settings"
-            }
+            hostingWindow?.title = "\(tab.rawValue) Settings"
         }
     }
     
@@ -126,6 +132,8 @@ struct SettingsView: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return)
             .help("Save your changes and close settings.")
+            .accessibilityLabel("Save changes")
+            .accessibilityHint("Applies settings and closes the window")
         }
     }
     
@@ -140,101 +148,124 @@ struct SettingsView: View {
     }
     
     private func saveSettings() {
+        if let validationError = validateProviderSettings() {
+            showValidationAlert(message: validationError)
+            return
+        }
+
         let oldShortcut = UserDefaults.standard.string(forKey: "shortcut")
-        
+
         UserDefaults.standard.set(settings.shortcutText, forKey: "shortcut")
-                
-        if settings.currentProvider == "gemini" {
-            appState.saveGeminiConfig(
-                apiKey: settings.geminiApiKey,
-                model: settings.geminiModel,
-                customModelName: settings.geminiCustomModel
-            )
-        } else if settings.currentProvider == "mistral" {
-            appState.saveMistralConfig(
-                apiKey: settings.mistralApiKey,
-                baseURL: settings.mistralBaseURL,
-                model: settings.mistralModel
-            )
-        } else if settings.currentProvider == "anthropic" {
-            appState.saveAnthropicConfig(
-                apiKey: settings.anthropicApiKey,
-                model: settings.anthropicModel
-            )
-        }
-        else if settings.currentProvider == "openrouter" {
-            appState.saveOpenRouterConfig(
-                apiKey: settings.openRouterApiKey,
-                model: OpenRouterModel(rawValue: settings.openRouterModel) ?? .gpt4o,
-                customModelName: settings.openRouterCustomModel
-            )
-        }
-        else if settings.currentProvider == "openai" {
-            appState.saveOpenAIConfig(
-                apiKey: settings.openAIApiKey,
-                baseURL: settings.openAIBaseURL,
-                organization: settings.openAIOrganization,
-                project: settings.openAIProject,
-                model: settings.openAIModel
-            )
-        } else if settings.currentProvider == "ollama" {
-            appState.saveOllamaConfig(
-                baseURL: settings.ollamaBaseURL,
-                model: settings.ollamaModel,
-                keepAlive: settings.ollamaKeepAlive
-            )
-        }
-        
-        UserDefaults.standard.set(settings.ollamaImageMode.rawValue, forKey: "ollama_image_mode")
-        
-        appState.setCurrentProvider(settings.currentProvider)
-        
+
+        // Use the unified save method from AppState
+        appState.saveCurrentProviderSettings()
+
         if oldShortcut != settings.shortcutText {
             NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: nil)
         }
-        
+
         if showOnlyApiSetup {
             UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
         }
-        
+
         needsSaving = false
-        
+
         Task { @MainActor in
             if self.showOnlyApiSetup {
                 WindowManager.shared.cleanupWindows()
-            } else if let window = NSApplication.shared.windows.first(where: {
-                $0.contentView?.subviews.contains(where: { $0 is NSHostingView<SettingsView> }) ?? false
-            }) {
-                window.close()
+            } else {
+                WindowManager.shared.closeSettingsWindow()
             }
         }
     }
-    
-    private func restartOnboarding() {
-        settings.hasCompletedOnboarding = false
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Onboarding"
-        window.isReleasedWhenClosed = false
-        
-        let onboardingView = OnboardingView(appState: appState)
-        let hostingView = NSHostingView(rootView: onboardingView)
-        window.contentView = hostingView
-        window.level = .floating
-
-        WindowManager.shared.setOnboardingWindow(window, hostingView: hostingView)
-        window.makeKeyAndOrderFront(nil)
-
-        if let settingsWindow = NSApplication.shared.windows.first(where: {
-            $0.contentView?.subviews.contains(where: { $0 is NSHostingView<SettingsView> }) ?? false
-        }) {
-            settingsWindow.close()
+    private func validateProviderSettings() -> String? {
+        switch settings.currentProvider {
+        case "gemini":
+            if settings.geminiApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Gemini API key is required."
+            }
+            if settings.geminiModel == .custom &&
+                settings.geminiCustomModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Custom Gemini model name is required."
+            }
+        case "mistral":
+            if settings.mistralApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Mistral API key is required."
+            }
+            if settings.mistralModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Mistral model is required."
+            }
+        case "anthropic":
+            if settings.anthropicApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Anthropic API key is required."
+            }
+            if settings.anthropicModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Anthropic model is required."
+            }
+        case "openrouter":
+            if settings.openRouterApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "OpenRouter API key is required."
+            }
+            if OpenRouterModel(rawValue: settings.openRouterModel) == .custom &&
+                settings.openRouterCustomModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Custom OpenRouter model name is required."
+            }
+        case "openai":
+            if settings.openAIApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "OpenAI API key is required."
+            }
+            if settings.openAIModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "OpenAI model is required."
+            }
+        case "ollama":
+            if settings.ollamaBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Ollama base URL is required."
+            }
+            if settings.ollamaModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Ollama model is required."
+            }
+        default:
+            break
         }
+        return nil
+    }
+
+    private func showValidationAlert(message: String) {
+        validationAlertMessage = message
+        showingValidationAlert = true
+    }
+}
+
+private struct WindowAccessor: NSViewRepresentable {
+    let callback: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        WindowAccessorView(callback: callback)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let view = nsView as? WindowAccessorView else { return }
+        view.callback = callback
+    }
+}
+
+private final class WindowAccessorView: NSView {
+    var callback: (NSWindow?) -> Void
+
+    init(callback: @escaping (NSWindow?) -> Void) {
+        self.callback = callback
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        callback(window)
     }
 }
 
