@@ -86,11 +86,11 @@ final class CustomProvider: AIProvider {
         logger.debug("CustomProvider: Using URL: \(url.absoluteString)")
 
         // Prepare the request
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 60
+        var requestBuilder = URLRequest(url: url)
+        requestBuilder.httpMethod = "POST"
+        requestBuilder.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        requestBuilder.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        requestBuilder.timeoutInterval = 60
 
         // Build messages array
         var messages: [[String: Any]] = []
@@ -115,7 +115,10 @@ final class CustomProvider: AIProvider {
             "max_tokens": 4096
         ]
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        requestBuilder.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        // Capture as immutable value for Swift 6 concurrency
+        let request = requestBuilder
 
         logger.debug("CustomProvider: Sending request to \(url.absoluteString)")
 

@@ -109,12 +109,15 @@ final class OllamaProvider: AIProvider {
 
             let jsonData = try JSONSerialization.data(withJSONObject: body)
 
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.httpBody = jsonData
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.timeoutInterval = 60
+            var requestBuilder = URLRequest(url: url)
+            requestBuilder.httpMethod = "POST"
+            requestBuilder.httpBody = jsonData
+            requestBuilder.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            requestBuilder.setValue("application/json", forHTTPHeaderField: "Accept")
+            requestBuilder.timeoutInterval = 60
+            
+            // Capture as immutable value for Swift 6 concurrency
+            let request = requestBuilder
 
             // 4) Execute request with retry for transient failures
             return try await withRetry(config: .default) {

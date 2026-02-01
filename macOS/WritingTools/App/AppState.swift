@@ -474,7 +474,7 @@ final class AppState {
 
         // Reactivate previous application
         if let previousApp = previousApplication {
-            let didActivate = previousApp.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            let didActivate = previousApp.activate(options: [.activateAllWindows])
             if !didActivate {
                 logger.warning("Failed to activate previous app: \(previousApp.bundleIdentifier ?? "unknown")")
             }
@@ -577,7 +577,7 @@ final class AppState {
         pb.writeObjects([item])
 
         if let previous = previousApplication {
-            let didActivate = previous.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            let didActivate = previous.activate(options: [.activateAllWindows])
             if !didActivate {
                 logger.warning("Failed to activate previous app: \(previous.bundleIdentifier ?? "unknown")")
             }
