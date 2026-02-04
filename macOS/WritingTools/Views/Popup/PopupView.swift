@@ -26,6 +26,9 @@ struct PopupView: View {
   // Error handling
   @State private var showingErrorAlert = false
   @State private var errorMessage = ""
+  
+  // Focus management for accessibility
+  @FocusState private var isTextFieldFocused: Bool
 
   let closeAction: () -> Void
 
@@ -91,6 +94,7 @@ struct PopupView: View {
             text: $customText
           )
           .textFieldStyle(.plain)
+          .focused($isTextFieldFocused)
           .appleStyleTextField(
             text: customText,
             isLoading: isCustomLoading,
@@ -100,36 +104,39 @@ struct PopupView: View {
           .accessibilityHint("Describe how to modify the selected text")
         }
         .padding(.horizontal)
+        .onAppear {
+          // Auto-focus the text field when popup appears for better keyboard accessibility
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            isTextFieldFocused = true
+          }
+        }
       }
 
       if !appState.selectedText.isEmpty || !appState.selectedImages.isEmpty {
         // Command buttons grid
-        ScrollView {
-          LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(appState.commandManager.commands) { command in
-              CommandButton(
-                command: command,
-                isEditing: viewModel.isEditMode,
-                isLoading: processingCommandId == command.id,
-                onTap: {
-                  processingCommandId = command.id
-                  Task {
-                    await processCommandAndCloseWhenDone(command)
-                  }
-                },
-                onEdit: {
-                  editingCommand = command
-                },
-                onDelete: {
-                  logger.debug("Deleting command: \(command.name)")
-                  appState.commandManager.deleteCommand(command)
+        LazyVGrid(columns: columns, spacing: 8) {
+          ForEach(appState.commandManager.commands) { command in
+            CommandButton(
+              command: command,
+              isEditing: viewModel.isEditMode,
+              isLoading: processingCommandId == command.id,
+              onTap: {
+                processingCommandId = command.id
+                Task {
+                  await processCommandAndCloseWhenDone(command)
                 }
-              )
-            }
+              },
+              onEdit: {
+                editingCommand = command
+              },
+              onDelete: {
+                logger.debug("Deleting command: \(command.name)")
+                appState.commandManager.deleteCommand(command)
+              }
+            )
           }
-          .padding(.horizontal, 8)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 16)
       }
 
       if viewModel.isEditMode {
@@ -353,7 +360,7 @@ struct PopupView: View {
   )
   .frame(width: 400, height: 500)
 }
-
+/*
 #Preview("Popup View - Edit Mode") {
   @Previewable @State var appState = {
     let state = AppState.shared
@@ -414,3 +421,4 @@ struct PopupView: View {
   )
   .frame(width: 400, height: 500)
 }
+*/

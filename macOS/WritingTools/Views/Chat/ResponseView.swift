@@ -5,64 +5,52 @@ import Observation
 // MARK: - String Extension for Markdown Processing
 
 extension String {
-    /// Normalizes LaTeX delimiters to markdown-friendly versions
-    /// Converts \[...\] to $$...$$ and \(...\) to $...$
-    fileprivate func normalizedLatex() -> String {
-        var result = self
-        
-        // Convert \[...\] to $$...$$
-        result = result.replacingOccurrences(of: #"\\\["#, with: "\n$$", options: .regularExpression)
-        result = result.replacingOccurrences(of: #"\\\]"#, with: "$$\n", options: .regularExpression)
-        
-        // Convert \(...\) to $...$
-        result = result.replacingOccurrences(of: #"\\\("#, with: "$", options: .regularExpression)
-        result = result.replacingOccurrences(of: #"\\\)"#, with: "$", options: .regularExpression)
-        
-        return result
-    }
-    
-    /// Strips outer code block wrapper if the entire response is wrapped in one.
-    /// Some AI models wrap their entire response in ```markdown or ``` fences.
+    /// Strips outer markdown code block wrapper if the entire response is wrapped in one.
+    /// Some AI models wrap their entire response in ```markdown fences.
     fileprivate func strippingOuterCodeBlock() -> String {
         let trimmed = self.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Pattern to match content wrapped in a single outer code block
-        // Matches: ```<optional language>\n<content>\n```
-        // The (?s) flag makes . match newlines
-        let pattern = #"^```(?:\w+)?\s*\n([\s\S]*?)\n```$"#
+        // Only unwrap markdown wrappers so legitimate code fences (e.g. ```swift) stay intact.
+        let pattern = #"^```(?:markdown|md)\s*\n([\s\S]*?)\n```$"#
         
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let match = regex.firstMatch(in: trimmed, options: [], range: NSRange(trimmed.startIndex..., in: trimmed)),
               let contentRange = Range(match.range(at: 1), in: trimmed) else {
             return self
         }
         
-        // Only strip if this is truly a single outer wrapper (no other content outside)
-        let content = String(trimmed[contentRange])
-        return content
+        return String(trimmed[contentRange])
     }
     
     /// Applies all markdown normalizations for AI responses
     fileprivate func normalizedForMarkdown() -> String {
-        return self
-            .strippingOuterCodeBlock()
-            .normalizedLatex()
+        return self.strippingOuterCodeBlock()
     }
 }
 
 // MARK: - Chat Message Model
 
 struct ChatMessage: Identifiable, Equatable, Sendable {
-    let id = UUID()
+    let id: UUID
     let role: String // "user" or "assistant"
-    let content: String
-    let timestamp: Date = Date()
+    var content: String
+    let timestamp: Date
+    var isStreaming: Bool
+    
+    init(role: String, content: String, isStreaming: Bool = false) {
+        self.id = UUID()
+        self.role = role
+        self.content = content
+        self.timestamp = Date()
+        self.isStreaming = isStreaming
+    }
     
     static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool {
         lhs.id == rhs.id &&
         lhs.role == rhs.role &&
         lhs.content == rhs.content &&
-        lhs.timestamp == rhs.timestamp
+        lhs.timestamp == rhs.timestamp &&
+        lhs.isStreaming == rhs.isStreaming
     }
 }
 
@@ -72,6 +60,7 @@ struct ResponseView: View {
     @State private var viewModel: ResponseViewModel
     @Bindable private var settings = AppSettings.shared
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
     @State private var inputText: String = ""
     @State private var isRegenerating: Bool = false
     @State private var scrollProxy: ScrollViewProxy?
@@ -99,7 +88,7 @@ struct ResponseView: View {
                     .frame(minWidth: 80)
                 }
                 .buttonStyle(.borderedProminent)
-                .animation(.easeInOut, value: viewModel.showCopyConfirmation)
+                .animation(reduceMotion ? nil : .easeInOut, value: viewModel.showCopyConfirmation)
                 
                 Spacer()
                 
@@ -178,8 +167,12 @@ struct ResponseView: View {
                     }
                     
                     if let lastId = newValue.last?.id {
-                        withAnimation {
+                        if reduceMotion {
                             proxy.scrollTo(lastId, anchor: .bottom)
+                        } else {
+                            withAnimation {
+                                proxy.scrollTo(lastId, anchor: .bottom)
+                            }
                         }
                     }
                 }
@@ -241,6 +234,7 @@ struct ResponseView: View {
 struct ChatMessageView: View {
     let message: ChatMessage
     let fontSize: CGFloat
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
     @State private var isHovering: Bool = false
     @State private var showCopiedFeedback: Bool = false
     
@@ -255,7 +249,7 @@ struct ChatMessageView: View {
             }
         }
         .padding(.top, 4)
-        .animation(.spring(), value: message.role)
+        .animation(reduceMotion ? nil : .spring(), value: message.role)
         .onHover { hovering in
             isHovering = hovering
         }
@@ -278,27 +272,38 @@ struct ChatMessageView: View {
                     }
                 }
             
-            // Timestamp and copy button
+            // Timestamp, streaming indicator, and copy button
             HStack(spacing: 8) {
-                Text(message.timestamp.formatted(.dateTime.hour().minute()))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                
-                Button(action: copyEntireMessage) {
-                    if showCopiedFeedback {
-                        Text("Copied")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Image(systemName: "doc.on.doc")
+                if message.isStreaming {
+                    // Streaming indicator
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("Generating...")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                } else {
+                    Text(message.timestamp.formatted(.dateTime.hour().minute()))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    
+                    Button(action: copyEntireMessage) {
+                        if showCopiedFeedback {
+                            Text("Copied")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Image(systemName: "doc.on.doc")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(showCopiedFeedback ? "" : "Copy Message")
+                    .accessibilityLabel("Copy message")
+                    .accessibilityHint("Copies this message to the clipboard")
                 }
-                .buttonStyle(.plain)
-                .help(showCopiedFeedback ? "" : "Copy Message")
-                .accessibilityLabel("Copy message")
-                .accessibilityHint("Copies this message to the clipboard")
             }
             .padding(.bottom, 2)
         }
@@ -391,6 +396,11 @@ final class ResponseViewModel {
         
         isProcessing = true
         
+        // Create a placeholder message for streaming
+        let streamingMessage = ChatMessage(role: "assistant", content: "", isStreaming: true)
+        messages.append(streamingMessage)
+        let messageIndex = messages.count - 1
+        
         do {
             // Build context-aware system prompt
             let systemPrompt = buildSystemPrompt()
@@ -398,25 +408,39 @@ final class ResponseViewModel {
             // Build user prompt with conversation context
             let userPrompt = buildUserPrompt(question: question)
             
-            // Call the actual AI provider
-            let rawResponse = try await provider.processText(
+            var accumulatedContent = ""
+            
+            // Use streaming API
+            try await provider.processTextStreaming(
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
-                images: [], // Follow-up questions don't include images
-                streaming: false
-            )
+                images: [] // Follow-up questions don't include images
+            ) { [self] chunk in
+                accumulatedContent += chunk
+                // Update the message in place for real-time display
+                if messageIndex < messages.count {
+                    messages[messageIndex].content = accumulatedContent
+                }
+            }
             
             // 🔧 Normalize markdown content (strip outer code blocks + normalize LaTeX)
-            let normalizedResponse = rawResponse.normalizedForMarkdown()
+            let normalizedResponse = accumulatedContent.normalizedForMarkdown()
             
-            // Add to UI
-            messages.append(ChatMessage(role: "assistant", content: normalizedResponse))
+            // Finalize the message
+            if messageIndex < messages.count {
+                messages[messageIndex].content = normalizedResponse
+                messages[messageIndex].isStreaming = false
+            }
             
             // Add to conversation history
             conversationHistory.append((role: "assistant", content: normalizedResponse))
             
             isProcessing = false
         } catch {
+            // Remove the streaming message on error
+            if messageIndex < messages.count {
+                messages.remove(at: messageIndex)
+            }
             isProcessing = false
             throw error
         }

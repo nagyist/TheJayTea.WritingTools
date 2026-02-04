@@ -53,6 +53,9 @@ struct CommandButton: View {
             }
             .buttonStyle(LoadingButtonStyle(isLoading: isLoading))
             .disabled(isLoading || isEditing)
+            .accessibilityLabel(command.name)
+            .accessibilityHint(isLoading ? "Processing" : "Apply \(command.name) to selected text")
+            .accessibilityAddTraits(isLoading ? .updatesFrequently : [])
             
             // Overlay edit controls when in edit mode
             if isEditing {

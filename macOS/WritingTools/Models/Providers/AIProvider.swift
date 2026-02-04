@@ -8,9 +8,37 @@ protocol AIProvider {
 
     // Process text with optional system prompt and images
     func processText(systemPrompt: String?, userPrompt: String, images: [Data], streaming: Bool) async throws -> String
+    
+    /// Process text with streaming support - calls onChunk for each token received
+    /// Default implementation falls back to non-streaming
+    func processTextStreaming(
+        systemPrompt: String?,
+        userPrompt: String,
+        images: [Data],
+        onChunk: @escaping @MainActor (String) -> Void
+    ) async throws
 
     // Cancel ongoing requests
     func cancel()
+}
+
+// Default implementation for providers that don't support streaming
+extension AIProvider {
+    func processTextStreaming(
+        systemPrompt: String?,
+        userPrompt: String,
+        images: [Data],
+        onChunk: @escaping @MainActor (String) -> Void
+    ) async throws {
+        // Default: fall back to non-streaming and deliver result all at once
+        let result = try await processText(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            images: images,
+            streaming: false
+        )
+        onChunk(result)
+    }
 }
 
 // MARK: - Retry Utility for API Calls

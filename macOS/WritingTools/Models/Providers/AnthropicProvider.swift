@@ -8,20 +8,20 @@ struct AnthropicConfig: Codable, Sendable {
     var apiKey: String
     var model: String
     
-    static let defaultModel = "claude-3-5-sonnet-20240620"
+    static let defaultModel = "claude-sonnet-4-5"
 }
 
 enum AnthropicModel: String, CaseIterable {
     case claude45Haiku = "claude-haiku-4-5"
     case claude45Sonnet = "claude-sonnet-4-5"
-    case claude41Opus = "claude-opus-4-1"
+    case claude41Opus = "claude-opus-4-5"
     case custom
     
     var displayName: String {
         switch self {
         case .claude45Haiku: return "Claude 4.5 Haiku (Fastest, Most Affordable)"
         case .claude45Sonnet: return "Claude 4.5 Sonnet (Best Coding Model)"
-        case .claude41Opus: return "Claude 4.1 Opus (Most Capable, Expensive)"
+        case .claude41Opus: return "Claude 4.5 Opus (Most Capable, Expensive)"
         case .custom: return "Custom"
         }
     }

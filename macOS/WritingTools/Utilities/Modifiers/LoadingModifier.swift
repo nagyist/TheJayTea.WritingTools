@@ -4,6 +4,7 @@ struct LoadingBorderModifier: ViewModifier {
     let isLoading: Bool
     @State private var rotation: Double = 0
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
     
     private let accentColor = Color.blue
     
@@ -26,7 +27,7 @@ struct LoadingBorderModifier: ViewModifier {
                 }
             )
             .disabled(isLoading)
-            .animation(.easeInOut(duration: 0.2), value: isLoading)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: isLoading)
     }
 }
 // Shared color extension

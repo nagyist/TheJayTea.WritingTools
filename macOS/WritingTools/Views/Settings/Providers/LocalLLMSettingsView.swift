@@ -22,19 +22,14 @@ struct LocalLLMSettingsView: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             if !llmProvider.isPlatformSupported {
-                GroupBox {
-                    platformNotSupportedView
-                }
-                .accessibilityElement(children: .contain)
-                .accessibilityAddTraits(.isHeader)
+                platformNotSupportedView
+                    .accessibilityElement(children: .contain)
+                    .accessibilityAddTraits(.isHeader)
             } else {
-                GroupBox {
-                    supportedPlatformView
-                }
-                .accessibilityElement(children: .contain)
-                .accessibilityAddTraits(.isHeader)
+                supportedPlatformView
+                    .accessibilityElement(children: .contain)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -68,27 +63,25 @@ struct LocalLLMSettingsView: View {
     }
     
     private var platformNotSupportedView: some View {
-        VStack(alignment: .center, spacing: 16) {
-            Image(systemName: "xmark.octagon.fill")
-                .font(.system(size: 44))
-                .foregroundStyle(.red)
-                .accessibilityHidden(true)
-            
-            Text("Apple Silicon Required")
-                .font(.title2)
-                .bold()
-                .accessibilityAddTraits(.isHeader)
-            
-            Text("Local LLM processing is only available on Apple Silicon (M-series) devices.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-            
-            Text("Please select a different AI Provider in Settings if you are on an Intel Mac.")
-                .font(.headline)
-                .multilineTextAlignment(.center)
+        GroupBox {
+            VStack(alignment: .center, spacing: 12) {
+                Image(systemName: "xmark.octagon.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.red)
+                    .accessibilityHidden(true)
+                
+                Text("Apple Silicon Required")
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                
+                Text("Local LLM processing is only available on Apple Silicon (M-series) devices. Please select a different AI Provider.")
+                    .font(.callout)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
         }
-        .padding()
-        .frame(maxWidth: .infinity)
     }
     
     // Filter models based on the selected category
@@ -104,70 +97,73 @@ struct LocalLLMSettingsView: View {
     }
     
     private var supportedPlatformView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            GroupBox("Model Filters") {
+        VStack(alignment: .leading, spacing: 10) {
+            GroupBox("Model Configuration") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Picker("Filter", selection: $selectedModelCategory) {
-                        ForEach(ModelCategory.allCases) { category in
-                            Text(category.rawValue).tag(category)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .help("Filter between all, text-only, and vision-capable models.")
-                }
-            }
-
-            GroupBox("Model Selection") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Choose a model to download and use for local processing.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
-                    Picker("Model", selection: $settings.selectedLocalLLMId) {
-                        Text("None Selected").tag(String?.none)
-                        ForEach(filteredModels) { modelType in
-                            HStack {
-                                Text(modelType.displayName)
-                                if modelType.isVisionModel {
-                                    Image(systemName: "camera.fill")
-                                        .foregroundStyle(.blue)
-                                }
+                    // Filter picker - inline
+                    HStack {
+                        Text("Filter:")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Picker("Filter", selection: $selectedModelCategory) {
+                            ForEach(ModelCategory.allCases) { category in
+                                Text(category.rawValue).tag(category)
                             }
-                            .tag(String?.some(modelType.id))
                         }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .help("Filter between all, text-only, and vision-capable models.")
                     }
-                    .pickerStyle(.menu)
-                    .help("Select a local model. Vision-capable models can process images.")
+                    
+                    Divider()
+                    
+                    // Model selection
+                    HStack {
+                        Text("Model:")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Picker("Model", selection: $settings.selectedLocalLLMId) {
+                            Text("None Selected").tag(String?.none)
+                            ForEach(filteredModels) { modelType in
+                                HStack {
+                                    Text(modelType.displayName)
+                                    if modelType.isVisionModel {
+                                        Image(systemName: "camera.fill")
+                                            .foregroundStyle(.blue)
+                                    }
+                                }
+                                .tag(String?.some(modelType.id))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .help("Select a local model. Vision-capable models can process images.")
+                    }
 
                     if let selectedModel = llmProvider.selectedModelType {
                         HStack(spacing: 6) {
                             if selectedModel.isVisionModel {
-                                Label("Vision-capable model", systemImage: "camera.fill")
+                                Label("Vision-capable", systemImage: "camera.fill")
                                     .foregroundStyle(.blue)
                                     .font(.caption)
-                                Text("Can process images directly")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
                             } else {
-                                Label("Text-only model", systemImage: "text.justifyleft")
+                                Label("Text-only", systemImage: "text.justifyleft")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        .padding(.top, 4)
                     }
                 }
             }
 
             if let selectedModelType = llmProvider.selectedModelType {
-                GroupBox("Status: \(selectedModelType.displayName)") {
-                    VStack(alignment: .leading, spacing: 12) {
+                GroupBox("Status") {
+                    VStack(alignment: .leading, spacing: 8) {
                         if !llmProvider.modelInfo.isEmpty {
                             Text(llmProvider.modelInfo)
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .lineLimit(2)
                         }
 
                         modelActionView(for: selectedModelType)
@@ -179,20 +175,20 @@ struct LocalLLMSettingsView: View {
                                 Text(error)
                                     .foregroundStyle(.red)
                                     .font(.caption)
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                    .lineLimit(2)
                             }
                             .accessibilityElement(children: .combine)
                             .accessibilityLabel("Error: \(error)")
                         }
                     }
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 4)
                 }
             } else {
-                Text("Please select a model from the dropdown above to see its status and download options.")
+                Text("Select a model above to see its status.")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding()
+                    .padding(.vertical, 8)
             }
         }
     }

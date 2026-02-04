@@ -237,4 +237,85 @@ final class OpenAIProvider: AIProvider {
         currentTask = nil
         isProcessing = false
     }
+    
+    // MARK: - Streaming Implementation
+    
+    func processTextStreaming(
+        systemPrompt: String?,
+        userPrompt: String,
+        images: [Data],
+        onChunk: @escaping @MainActor (String) -> Void
+    ) async throws {
+        isProcessing = true
+        defer {
+            isProcessing = false
+            currentTask = nil
+        }
+        
+        guard !config.apiKey.isEmpty else {
+            throw NSError(domain: "OpenAIAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "API key is missing."])
+        }
+        
+        // For custom base URLs, fall back to non-streaming
+        if !config.baseURL.isEmpty && config.baseURL != OpenAIConfig.defaultBaseURL {
+            let result = try await Self.performCustomOpenAIRequest(
+                config: config,
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                images: images
+            )
+            onChunk(result)
+            return
+        }
+        
+        let baseURL = config.baseURL.isEmpty ? OpenAIConfig.defaultBaseURL : config.baseURL
+        let openAIService = AIProxy.openAIDirectService(
+            unprotectedAPIKey: config.apiKey,
+            baseURL: baseURL
+        )
+        
+        var messages: [OpenAIChatCompletionRequestBody.Message] = []
+        
+        if let systemPrompt = systemPrompt {
+            messages.append(.system(content: .text(systemPrompt)))
+        }
+        
+        // Handle text and images
+        if images.isEmpty {
+            messages.append(.user(content: .text(userPrompt)))
+        } else {
+            var parts: [OpenAIChatCompletionRequestBody.Message.ContentPart] = [.text(userPrompt)]
+            
+            for imageData in images {
+                let dataString = "data:image/jpeg;base64," + imageData.base64EncodedString()
+                if let dataURL = URL(string: dataString) {
+                    parts.append(.imageURL(dataURL, detail: .auto))
+                }
+            }
+            
+            messages.append(.user(content: .parts(parts)))
+        }
+        
+        do {
+            let stream = try await openAIService.streamingChatCompletionRequest(body: .init(
+                model: config.model,
+                messages: messages
+            ), secondsToWait: 60)
+            
+            for try await chunk in stream {
+                if Task.isCancelled { break }
+                if let content = chunk.choices.first?.delta.content {
+                    onChunk(content)
+                }
+            }
+        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+            logger.error("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
+            throw NSError(domain: "OpenAIAPI",
+                          code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+        } catch {
+            logger.error("Could not create OpenAI streaming chat completion: \(error.localizedDescription)")
+            throw error
+        }
+    }
 }

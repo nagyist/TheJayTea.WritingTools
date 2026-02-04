@@ -245,10 +245,10 @@ final class AppState {
         self.ollamaProvider = OllamaProvider(config: ollamaConfig)
 
         // Initialize OpenRouter
-        let openRouterModelEnum = OpenRouterModel(rawValue: asettings.openRouterModel) ?? .gpt4o
+        let openRouterModelEnum = OpenRouterModel(rawValue: asettings.openRouterModel)
         let openRouterModelName = (openRouterModelEnum == .custom)
             ? asettings.openRouterCustomModel
-            : openRouterModelEnum.rawValue
+            : openRouterModelEnum?.rawValue ?? asettings.openRouterModel
         let openRouterConfig = OpenRouterConfig(
             apiKey: asettings.openRouterApiKey,
             model: openRouterModelName
@@ -390,7 +390,7 @@ final class AppState {
         case "openrouter":
             saveOpenRouterConfig(
                 apiKey: settings.openRouterApiKey,
-                model: OpenRouterModel(rawValue: settings.openRouterModel) ?? .gpt4o,
+                model: OpenRouterModel(rawValue: settings.openRouterModel) ?? .kimi,
                 customModelName: settings.openRouterCustomModel
             )
         case "ollama":

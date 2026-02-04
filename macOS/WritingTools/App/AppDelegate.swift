@@ -4,41 +4,14 @@ import Carbon.HIToolbox
 
 private let logger = AppLogger.logger("AppDelegate")
 
+/// AppDelegate handles keyboard shortcuts, services, and popup window management.
+/// Menu bar UI is handled by SwiftUI's MenuBarExtra in writing_toolsApp.swift.
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    // Static status item to prevent deallocation
-    private static var sharedStatusItem: NSStatusItem?
-
     // Property to track service-triggered popups
     private var isServiceTriggered: Bool = false
-
-    // Computed property to manage the menu bar status item
-    var statusBarItem: NSStatusItem! {
-        get {
-            if AppDelegate.sharedStatusItem == nil {
-                AppDelegate.sharedStatusItem =
-                    NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-                configureStatusBarItem()
-            }
-            return AppDelegate.sharedStatusItem
-        }
-        set {
-            AppDelegate.sharedStatusItem = newValue
-        }
-    }
-
+    
     let appState = AppState.shared
-    private var settingsWindow: NSWindow?
-    private var aboutWindow: NSWindow?
-    private var settingsHostingView: NSHostingView<SettingsView>?
-    private var aboutHostingView: NSHostingView<AboutView>?
-
-    // Pasteboard monitoring
-    private var pasteboardObserver: NSObjectProtocol?
-    @objc private func toggleHotkeys() {
-        AppSettings.shared.hotkeysPaused.toggle()
-        setupMenuBar()
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -51,10 +24,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        Task { @MainActor [weak self] in
-            self?.setupMenuBar()
+        Task { @MainActor in
             if !AppSettings.shared.hasCompletedOnboarding {
-                self?.showOnboarding()
+                self.showOnboarding()
             }
         }
 
@@ -193,14 +165,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } catch {
             logger.error("Error processing command \(command.name): \(error.localizedDescription)")
 
-            // Show error alert
+            // Show non-blocking error alert
             await MainActor.run {
                 let alert = NSAlert()
                 alert.messageText = "Command Error"
                 alert.informativeText = "Failed to process '\(command.name)': \(error.localizedDescription)"
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.runModal()
+                
+                NSApp.activate(ignoringOtherApps: true)
+                alert.beginSheetModal(for: NSApp.keyWindow ?? alert.window) { _ in }
             }
         }
     }
@@ -211,86 +185,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSNotification.Name("CommandsChanged"),
             object: nil
         )
-        if let observer = pasteboardObserver {
-            NotificationCenter.default.removeObserver(observer)
-            pasteboardObserver = nil
-        }
         WindowManager.shared.cleanupWindows()
-    }
-
-    private func recreateStatusBarItem() {
-        AppDelegate.sharedStatusItem = nil
-        _ = self.statusBarItem
-    }
-
-    private func configureStatusBarItem() {
-        guard let button = statusBarItem?.button else { return }
-        button.image = NSImage(
-            systemSymbolName: "pencil.circle",
-            accessibilityDescription: "Writing Tools"
-        )
-    }
-
-    private func setupMenuBar() {
-        guard let statusBarItem = self.statusBarItem else {
-            logger.error("Failed to create status bar item")
-            return
-        }
-
-        let menu = NSMenu()
-        let settingsItem = NSMenuItem(title: "Settings", action: #selector(showSettings), keyEquivalent: ",")
-        settingsItem.keyEquivalentModifierMask = [.command]
-        menu.addItem(settingsItem)
-
-        let aboutItem = NSMenuItem(title: "About", action: #selector(showAbout), keyEquivalent: "")
-        menu.addItem(aboutItem)
-
-        let hotkeyTitle = AppSettings.shared.hotkeysPaused ? "Resume Hotkeys" : "Pause Hotkeys"
-        let hotkeyItem = NSMenuItem(title: hotkeyTitle, action: #selector(toggleHotkeys), keyEquivalent: "")
-        menu.addItem(hotkeyItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let resetItem = NSMenuItem(title: "Reset App", action: #selector(confirmResetApp), keyEquivalent: "")
-        menu.addItem(resetItem)
-        menu.addItem(NSMenuItem.separator())
-
-        let quitItem = NSMenuItem(
-            title: "Quit",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
-        quitItem.keyEquivalentModifierMask = [.command]
-        menu.addItem(quitItem)
-
-        statusBarItem.menu = menu
-    }
-
-    @objc private func confirmResetApp() {
-        let alert = NSAlert()
-        alert.messageText = "Reset Writing Tools?"
-        alert.informativeText = "This will reset windows and UI state. Your commands and settings will remain."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Reset")
-        alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn {
-            resetApp()
-        }
-    }
-
-    @objc private func resetApp() {
-        WindowManager.shared.cleanupWindows()
-
-        recreateStatusBarItem()
-        setupMenuBar()
-
-        let alert = NSAlert()
-        alert.messageText = "App Reset Complete"
-        alert.informativeText =
-            "The app has been reset. If you're still experiencing issues, try restarting the app."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
     }
 
     private func performRecoveryReset() {
@@ -299,77 +194,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         WindowManager.shared.cleanupWindows()
 
-        recreateStatusBarItem()
-        setupMenuBar()
-
         let alert = NSAlert()
         alert.messageText = "Recovery Complete"
         alert.informativeText =
             "The app has been reset to its default state."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
-        alert.runModal()
-    }
-
-    @objc private func showSettings() {
-        settingsWindow?.close()
-        closePopupWindow()
-        settingsWindow = nil
-        settingsHostingView = nil
-
-        settingsWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 520),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        settingsWindow?.isReleasedWhenClosed = false
-        settingsWindow?.minSize = NSSize(width: 520, height: 440)
-
-        let settingsView =
-            SettingsView(appState: appState, showOnlyApiSetup: false)
-        settingsHostingView = NSHostingView(rootView: settingsView)
-        settingsWindow?.contentView = settingsHostingView
-        if let window = settingsWindow, let hostingView = settingsHostingView {
-            WindowManager.shared.registerSettingsWindow(window, hostingView: hostingView)
-        }
-
-        if let window = settingsWindow {
-            window.title = "Settings"
-            window.level = .floating
-            window.center()
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
-            window.orderFrontRegardless()
-        }
-    }
-
-    @objc private func showAbout() {
-        aboutWindow?.close()
-        aboutWindow = nil
-        aboutHostingView = nil
-
-        aboutWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        aboutWindow?.isReleasedWhenClosed = false
-
-        let aboutView = AboutView()
-        aboutHostingView = NSHostingView(rootView: aboutView)
-        aboutWindow?.contentView = aboutHostingView
-        aboutWindow?.delegate = self
-
-        if let window = aboutWindow {
-            window.title = "About Writing Tools"
-            window.level = .floating
-            window.center()
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
-            window.orderFrontRegardless()
-        }
+        
+        // Use non-blocking alert
+        NSApp.activate()
+        alert.beginSheetModal(for: NSApp.keyWindow ?? alert.window) { _ in }
     }
 
     private func showOnboarding() {
@@ -420,17 +254,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         guard !isServiceTriggered else { return }
-
-        guard let window = notification.object as? NSWindow else { return }
-        Task { @MainActor [weak self] in
-            if window == self?.settingsWindow {
-                self?.settingsHostingView = nil
-                self?.settingsWindow = nil
-            } else if window == self?.aboutWindow {
-                self?.aboutHostingView = nil
-                self?.aboutWindow = nil
-            }
-        }
+        // Window cleanup is handled by WindowManager for popup and response windows
     }
 }
 

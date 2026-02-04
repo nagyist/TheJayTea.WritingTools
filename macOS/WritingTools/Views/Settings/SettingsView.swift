@@ -82,7 +82,7 @@ struct SettingsView: View {
             }
             .padding(20)
         }
-        .frame(minWidth: 520, idealWidth: 540, maxWidth: 720, minHeight: 440, idealHeight: showOnlyApiSetup ? 470 : 540, maxHeight: 820)
+        .frame(minWidth: 520, idealWidth: 540, maxWidth: 720, minHeight: 470, idealHeight: showOnlyApiSetup ? 470 : 540, maxHeight: 820)
         .background(WindowAccessor { window in
             hostingWindow = window
             updateWindowTitle(to: selectedTab)

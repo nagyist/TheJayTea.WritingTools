@@ -117,6 +117,7 @@ struct GeneralSettingsPane<SaveButton: View>: View {
             if !showOnlyApiSetup {
                 saveButton
             }
+            
         }
         .sheet(isPresented: $showingCommandsManager) {
             CommandsView(commandManager: appState.commandManager)

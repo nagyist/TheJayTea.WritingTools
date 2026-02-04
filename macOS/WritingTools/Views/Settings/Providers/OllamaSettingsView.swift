@@ -13,75 +13,69 @@ struct OllamaSettingsView: View {
     @Binding var needsSaving: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Group {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Connection Settings")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    
-                    TextField("Ollama Base URL", text: $settings.ollamaBaseURL)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: settings.ollamaBaseURL) { _, _ in
-                            needsSaving = true
-                        }
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            // Connection & Model Configuration combined
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Connection & Model")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Model Configuration")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    
-                    TextField("Ollama Model", text: $settings.ollamaModel)
+                TextField("Base URL", text: $settings.ollamaBaseURL)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: settings.ollamaBaseURL) { _, _ in
+                        needsSaving = true
+                    }
+                
+                HStack(spacing: 8) {
+                    TextField("Model", text: $settings.ollamaModel)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: settings.ollamaModel) { _, _ in
                             needsSaving = true
                         }
                     
-                    TextField("Keep Alive Time", text: $settings.ollamaKeepAlive)
+                    TextField("Keep Alive", text: $settings.ollamaKeepAlive)
                         .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
                         .onChange(of: settings.ollamaKeepAlive) { _, _ in
                             needsSaving = true
                         }
                 }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Image Recognition")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    
-                    Picker("Image Mode", selection: $settings.ollamaImageMode) {
-                        ForEach(OllamaImageMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: settings.ollamaImageMode) { _, _ in
-                        needsSaving = true
-                    }
-                    
-                    Text("Choose between performing OCR locally or using an Ollama vision-enabled model for image input.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Documentation")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    
-                    LinkText()
-                }
             }
-            .padding(.bottom, 4)
             
-            Button("Ollama Documentation") {
-                if let url = URL(string: "https://ollama.ai/download") {
-                    NSWorkspace.shared.open(url)
+            // Image Recognition
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Image Recognition")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                
+                Picker("Image Mode", selection: $settings.ollamaImageMode) {
+                    ForEach(OllamaImageMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .onChange(of: settings.ollamaImageMode) { _, _ in
+                    needsSaving = true
+                }
+                
+                Text("Use OCR locally or a vision-enabled model for images.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.link)
-            .help("Open Ollama download and documentation page in your browser.")
+            
+            // Documentation
+            HStack(spacing: 12) {
+                LinkText()
+                
+                Button("Ollama Docs") {
+                    if let url = URL(string: "https://docs.ollama.com") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .buttonStyle(.link)
+                .help("Open Ollama download and documentation page.")
+            }
         }
     }
 }

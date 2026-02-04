@@ -268,7 +268,7 @@ struct CommandEditor: View {
                                 TextField("e.g., gpt-4o-mini, claude-3-5-sonnet", text: $customModel)
                                     .textFieldStyle(.roundedBorder)
                             }
-                            Text("Leave empty to use the default model for the selected provider. Examples: gpt-4o-mini (OpenAI), claude-3-5-sonnet-20240620 (Anthropic), gemini-flash-latest (Gemini)")
+                            Text("Leave empty to use the default model for the selected provider. Examples: gpt-5-mini (OpenAI), claude-sonnet-4-5 (Anthropic), gemini-flash-latest (Gemini)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .padding(.leading, 92)

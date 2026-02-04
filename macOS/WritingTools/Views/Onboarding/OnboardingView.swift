@@ -4,6 +4,7 @@ import ApplicationServices
 @MainActor struct OnboardingView: View {
   @Bindable var appState: AppState
   @Bindable var settings = AppSettings.shared
+  @Environment(\.accessibilityReduceMotion) var reduceMotion
 
   @State private var currentStep = 0
   @State private var isAccessibilityGranted = AXIsProcessTrusted()
@@ -108,7 +109,11 @@ import ApplicationServices
         HStack {
           if currentStep > 0 {
             Button("Back") {
-              withAnimation { currentStep -= 1 }
+              if reduceMotion {
+                currentStep -= 1
+              } else {
+                withAnimation { currentStep -= 1 }
+              }
             }
             .buttonStyle(.bordered)
           }
@@ -117,7 +122,11 @@ import ApplicationServices
 
           if currentStep < steps.count - 1 {
             Button("Next") {
-              withAnimation { currentStep += 1 }
+              if reduceMotion {
+                currentStep += 1
+              } else {
+                withAnimation { currentStep += 1 }
+              }
             }
             .buttonStyle(.borderedProminent)
             .disabled(currentStep == 1 && (!isAccessibilityGranted || (wantsScreenshotOCR && !isScreenRecordingGranted)))

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AppleStyleTextFieldModifier: ViewModifier {
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
     let isLoading: Bool
     let text: String
     let onSubmit: () -> Void
@@ -11,6 +12,11 @@ struct AppleStyleTextFieldModifier: ViewModifier {
     
     private let animationDuration = 0.3
     private let animationDelay: Duration = .milliseconds(300)
+    
+    /// Returns nil when Reduce Motion is enabled to disable animations
+    private var animation: Animation? {
+        reduceMotion ? nil : .easeInOut(duration: animationDuration)
+    }
     
     func body(content: Content) -> some View {
         ZStack(alignment: .trailing) {
@@ -72,20 +78,23 @@ struct AppleStyleTextFieldModifier: ViewModifier {
                         : Color.gray.opacity(0.2),
                     lineWidth: isAnimating ? 2 : 0.5
                 )
-                .animation(.easeInOut(duration: animationDuration), value: isAnimating)
+                .animation(animation, value: isAnimating)
         )
     }
     
     private func performSubmitAnimation() {
-        withAnimation(.easeInOut(duration: animationDuration)) {
+        withAnimation(animation) {
             isAnimating = true
         }
         
         onSubmit()
         
         Task { @MainActor in
-            try? await Task.sleep(for: animationDelay)
-            withAnimation(.easeInOut(duration: animationDuration)) {
+            // Skip delay if reduce motion is enabled
+            if !reduceMotion {
+                try? await Task.sleep(for: animationDelay)
+            }
+            withAnimation(animation) {
                 isAnimating = false
             }
         }

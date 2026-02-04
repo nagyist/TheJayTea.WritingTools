@@ -1,19 +1,15 @@
 import SwiftUI
 import Observation
-import Combine
 
 class PopupWindow: NSWindow {
   private var initialLocation: NSPoint?
-  private var retainedHostingView: NSHostingView<PopupView>?
+  private var retainedHostingView: NSHostingView<PopupWindowContentView>?
   private var trackingArea: NSTrackingArea?
   private let appState: AppState
   private let windowWidth: CGFloat = 305
 
-  // Track observation tasks for proper cancellation
-  private var commandObservationTask: Task<Void, Never>?
-  private var editModeObservationTask: Task<Void, Never>?
-
   private let viewModel = PopupViewModel()
+  
   init(appState: AppState) {
     self.appState = appState
 
@@ -32,9 +28,6 @@ class PopupWindow: NSWindow {
     Task { @MainActor [weak self] in
       self?.updateWindowSize()
     }
-
-    observeCommandChanges()
-    observeEditModeChanges()
   }
 
   private func configureWindow() {
@@ -48,14 +41,18 @@ class PopupWindow: NSWindow {
       self?.close()
       self?.appState.previousApplication?.activate()
     }
-
-    let popupView = PopupView(
+    
+    // Use a wrapper view that observes changes and triggers window size updates
+    let contentView = PopupWindowContentView(
       appState: appState,
       viewModel: viewModel,
-      closeAction: closeAction
+      closeAction: closeAction,
+      onSizeChange: { [weak self] in
+        self?.updateWindowSize()
+      }
     )
 
-    let hostingView = FirstResponderHostingView(rootView: popupView)
+    let hostingView = FirstResponderHostingView(rootView: contentView)
     hostingView.wantsLayer = true
     hostingView.layer?.cornerRadius = 20
     hostingView.layer?.maskedCorners = [
@@ -66,7 +63,7 @@ class PopupWindow: NSWindow {
     ]
     hostingView.layer?.masksToBounds = true
 
-    contentView = hostingView
+    self.contentView = hostingView
     retainedHostingView = hostingView
 
     initialFirstResponder = hostingView
@@ -154,9 +151,6 @@ class PopupWindow: NSWindow {
   }
 
   func cleanup() {
-    // Cancel observation tasks to prevent memory leaks
-    cancelObservations()
-
     if let contentView = contentView, let trackingArea = trackingArea {
       contentView.removeTrackingArea(trackingArea)
       self.trackingArea = nil
@@ -269,64 +263,6 @@ class PopupWindow: NSWindow {
   }
 }
 
-// MARK: - Observation
-
-extension PopupWindow {
-  private func observeCommandChanges() {
-    // Cancel any existing observation task to prevent leaks
-    commandObservationTask?.cancel()
-
-    commandObservationTask = Task { @MainActor [weak self] in
-      while !Task.isCancelled {
-        guard let self else { return }
-
-        // Set up tracking for the next change
-        let hasChanged = await withCheckedContinuation { continuation in
-          withObservationTracking {
-            _ = self.appState.commandManager.commands
-          } onChange: {
-            continuation.resume(returning: true)
-          }
-        }
-
-        guard hasChanged, !Task.isCancelled else { break }
-        self.updateWindowSize()
-      }
-    }
-  }
-
-  private func observeEditModeChanges() {
-    // Cancel any existing observation task to prevent leaks
-    editModeObservationTask?.cancel()
-
-    editModeObservationTask = Task { @MainActor [weak self] in
-      while !Task.isCancelled {
-        guard let self else { return }
-
-        // Set up tracking for the next change
-        let hasChanged = await withCheckedContinuation { continuation in
-          withObservationTracking {
-            _ = self.viewModel.isEditMode
-          } onChange: {
-            continuation.resume(returning: true)
-          }
-        }
-
-        guard hasChanged, !Task.isCancelled else { break }
-        self.updateWindowSize()
-      }
-    }
-  }
-
-  /// Call this to stop all observation tasks (call in cleanup)
-  private func cancelObservations() {
-    commandObservationTask?.cancel()
-    commandObservationTask = nil
-    editModeObservationTask?.cancel()
-    editModeObservationTask = nil
-  }
-}
-
 extension PopupWindow: NSWindowDelegate {
   func windowDidBecomeKey(_ notification: Notification) {
     level = .popUpMenu
@@ -338,5 +274,32 @@ class FirstResponderHostingView<Content: View>: NSHostingView<Content> {
 
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
     true
+  }
+}
+
+// MARK: - SwiftUI Wrapper for Observation
+
+/// A wrapper view that observes state changes using SwiftUI's native observation
+/// and triggers window size updates via a callback. This replaces manual
+/// observation loops with cleaner SwiftUI patterns.
+struct PopupWindowContentView: View {
+  @Bindable var appState: AppState
+  @Bindable var viewModel: PopupViewModel
+  let closeAction: () -> Void
+  let onSizeChange: () -> Void
+  
+  var body: some View {
+    PopupView(
+      appState: appState,
+      viewModel: viewModel,
+      closeAction: closeAction
+    )
+    // Use SwiftUI's native onChange to observe state changes
+    .onChange(of: appState.commandManager.commands.count) { _, _ in
+      onSizeChange()
+    }
+    .onChange(of: viewModel.isEditMode) { _, _ in
+      onSizeChange()
+    }
   }
 }

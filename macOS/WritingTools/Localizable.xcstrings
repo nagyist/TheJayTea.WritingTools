@@ -821,6 +821,9 @@
     "Applies settings and closes the window" : {
 
     },
+    "Apply %@ to selected text" : {
+
+    },
     "Are you sure you want to delete the downloaded model %@? You'll need to download it again to use it." : {
       "localizations" : {
         "de" : {
@@ -1152,28 +1155,6 @@
         }
       }
     },
-    "Can process images directly" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kann Bilder direkt verarbeiten"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Puede procesar imágenes directamente"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Peut traiter directement les images"
-          }
-        }
-      }
-    },
     "Cancel" : {
       "localizations" : {
         "de" : {
@@ -1416,28 +1397,6 @@
         }
       }
     },
-    "Choose a model to download and use for local processing." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wählen Sie ein Modell aus, das Sie herunterladen und für die lokale Verarbeitung verwenden möchten."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Elija un modelo para descargarlo y utilizarlo para el procesamiento local."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choisissez un modèle à télécharger et à utiliser pour le traitement local."
-          }
-        }
-      }
-    },
     "Choose a window appearance that matches your preferences and context." : {
       "localizations" : {
         "de" : {
@@ -1461,6 +1420,7 @@
       }
     },
     "Choose between performing OCR locally or using an Ollama vision-enabled model for image input." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1848,7 +1808,11 @@
         }
       }
     },
+    "Connection & Model" : {
+
+    },
     "Connection Settings" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -2443,6 +2407,7 @@
       }
     },
     "Documentation" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -3324,6 +3289,9 @@
         }
       }
     },
+    "Filter:" : {
+
+    },
     "Finish" : {
       "localizations" : {
         "de" : {
@@ -3547,6 +3515,9 @@
           }
         }
       }
+    },
+    "Generating..." : {
+
     },
     "Get Anthropic API Key" : {
       "localizations" : {
@@ -3988,7 +3959,11 @@
         }
       }
     },
+    "Keep Alive" : {
+
+    },
     "Keep Alive Time" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -4099,27 +4074,8 @@
         }
       }
     },
-    "Leave empty to use the default model for the selected provider. Examples: gpt-4o-mini (OpenAI), claude-3-5-sonnet-20240620 (Anthropic), gemini-flash-latest (Gemini)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lassen Sie dieses Feld leer, um das Standardmodell für den ausgewählten Anbieter zu verwenden. Beispiele: gpt-4o-mini (OpenAI), claude-3-5-sonnet-20240620 (Anthropic), gemini-flash-latest (Gemini)"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Déjelo vacío para usar el modelo predeterminado del proveedor seleccionado. Ejemplos: gpt-4o-mini (OpenAI), claude-3-5-sonnet-20240620 (Anthropic), gemini-flash-latest (Gemini)"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Laissez vide pour utiliser le modèle par défaut du fournisseur sélectionné. Exemples : gpt-4o-mini (OpenAI), claude-3-5-sonnet-20240620 (Anthropic), gemini-flash-latest (Gemini)"
-          }
-        }
-      }
+    "Leave empty to use the default model for the selected provider. Examples: gpt-5-mini (OpenAI), claude-sonnet-4-5 (Anthropic), gemini-flash-latest (Gemini)" : {
+
     },
     "Loading %@..." : {
       "localizations" : {
@@ -4343,27 +4299,8 @@
         }
       }
     },
-    "Local LLM processing is only available on Apple Silicon (M-series) devices." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die lokale LLM-Verarbeitung ist nur auf Geräten der Apple Silicon (M-Serie) verfügbar."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El procesamiento LLM local solo está disponible en dispositivos Apple Silicon (serie M)."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le traitement LLM local n'est disponible que sur les appareils Apple Silicon (série M)."
-          }
-        }
-      }
+    "Local LLM processing is only available on Apple Silicon (M-series) devices. Please select a different AI Provider." : {
+
     },
     "Local LLMs: use the instructions on" : {
       "localizations" : {
@@ -4631,28 +4568,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Configuration du modèle"
-          }
-        }
-      }
-    },
-    "Model Filters" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Model Filters"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Filtros de modelo"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Filtres de modèle"
           }
         }
       }
@@ -5054,6 +4969,9 @@
         }
       }
     },
+    "Ollama Docs" : {
+
+    },
     "Ollama Documentation" : {
       "localizations" : {
         "de" : {
@@ -5077,6 +4995,7 @@
       }
     },
     "Ollama Model" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -5256,6 +5175,7 @@
       }
     },
     "Open Ollama download and documentation page in your browser." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -5276,6 +5196,9 @@
           }
         }
       }
+    },
+    "Open Ollama download and documentation page." : {
+
     },
     "Open OpenAI dashboard to create an API key." : {
       "localizations" : {
@@ -5614,6 +5537,9 @@
         }
       }
     },
+    "Pause Hotkeys" : {
+
+    },
     "Personality:" : {
       "localizations" : {
         "de" : {
@@ -5632,50 +5558,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Personnalité :"
-          }
-        }
-      }
-    },
-    "Please select a different AI Provider in Settings if you are on an Intel Mac." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bitte wählen Sie in den Einstellungen einen anderen KI-Anbieter aus, wenn Sie einen Intel-Mac verwenden."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Por favor, selecciona un proveedor de IA diferente en Configuración si estás en un Mac Intel."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Veuillez sélectionner un autre fournisseur d'IA dans les paramètres si vous utilisez un Mac Intel."
-          }
-        }
-      }
-    },
-    "Please select a model from the dropdown above to see its status and download options." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bitte wählen Sie ein Modell aus der obigen Dropdown-Liste aus, um den Status und die Download-Optionen anzuzeigen."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Seleccione un modelo del menú desplegable de arriba para ver su estado y las opciones de descarga."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Veuillez sélectionner un modèle dans la liste déroulante ci-dessus pour voir son statut et ses options de téléchargement."
           }
         }
       }
@@ -5922,6 +5804,9 @@
         }
       }
     },
+    "Processing" : {
+
+    },
     "Professional" : {
       "comment" : "ID for professional tone",
       "localizations" : {
@@ -6104,6 +5989,9 @@
         }
       }
     },
+    "Quit" : {
+
+    },
     "Recheck current permission statuses." : {
       "localizations" : {
         "de" : {
@@ -6270,6 +6158,9 @@
         }
       }
     },
+    "Reset App" : {
+
+    },
     "Reset Built-in Commands" : {
       "localizations" : {
         "de" : {
@@ -6363,6 +6254,9 @@
           }
         }
       }
+    },
+    "Resume Hotkeys" : {
+
     },
     "Retry Download" : {
       "localizations" : {
@@ -6572,6 +6466,9 @@
         }
       }
     },
+    "Select a model above to see its status." : {
+
+    },
     "Select a provider." : {
       "localizations" : {
         "de" : {
@@ -6774,6 +6671,9 @@
     "Sets the global shortcut to open Writing Tools." : {
 
     },
+    "Settings" : {
+
+    },
     "Settings Incomplete" : {
 
     },
@@ -6888,27 +6788,8 @@
         }
       }
     },
-    "Status: %@" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Status: %@"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Estado: %@"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Status: %@"
-          }
-        }
-      }
+    "Status" : {
+
     },
     "Step %lld of %lld" : {
       "localizations" : {
@@ -7010,27 +6891,8 @@
         }
       }
     },
-    "Text-only model" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modell für Text nur"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modelo sólo texto"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modèle texte uniquement"
-          }
-        }
-      }
+    "Text-only" : {
+
     },
     "The base URL of your API endpoint (e.g., https://api.openai.com/v1)" : {
       "localizations" : {
@@ -7472,6 +7334,9 @@
         }
       }
     },
+    "Use OCR locally or a vision-enabled model for images." : {
+
+    },
     "Use Proofread to preserve formatting while fixing grammar/spelling." : {
       "localizations" : {
         "de" : {
@@ -7628,27 +7493,8 @@
         }
       }
     },
-    "Vision-capable model" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vision-fähiges Modell"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modelo con capacidad de visión"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modèle capable de vision"
-          }
-        }
-      }
+    "Vision-capable" : {
+
     },
     "Voice:" : {
       "localizations" : {
@@ -7806,6 +7652,9 @@
           }
         }
       }
+    },
+    "Writing Tools" : {
+
     },
     "Writing Tools is a free, lightweight utility that enhances your writing with AI." : {
       "localizations" : {
