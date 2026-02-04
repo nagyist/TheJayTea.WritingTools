@@ -259,6 +259,9 @@ struct ChatMessageView: View {
     private func bubbleView(role: String) -> some View {
         VStack(alignment: role == "assistant" ? .leading : .trailing, spacing: 2) {
             RichMarkdownView(text: message.content, fontSize: fontSize)
+                // Keep markdown constrained to bubble width while allowing vertical growth.
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
                 .textSelection(.enabled)
                 .chatBubbleStyle(isFromUser: message.role == "user")
                 .accessibilityLabel(message.role == "user" ? "Your message" : "Assistant's response")
