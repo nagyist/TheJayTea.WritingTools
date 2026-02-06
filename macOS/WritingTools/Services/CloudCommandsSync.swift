@@ -31,10 +31,14 @@ final class CloudCommandsSync {
   private let pushDebounceDelay: Duration = .milliseconds(300)
 
   private init() {
-    // Start shortly after init to ensure AppState is ready
-    Task { @MainActor [weak self] in
-      await Task.yield()
-      self?.start()
+    // Started explicitly by AppDelegate based on user preference.
+  }
+
+  func setEnabled(_ enabled: Bool) {
+    if enabled {
+      start()
+    } else {
+      stop()
     }
   }
 
@@ -68,6 +72,27 @@ final class CloudCommandsSync {
         self?.handleICloudChange(note)
       }
     }
+
+    _ = store.synchronize()
+  }
+
+  func stop() {
+    guard started else { return }
+    started = false
+
+    if let commandsChangedObserver {
+      NotificationCenter.default.removeObserver(commandsChangedObserver)
+      self.commandsChangedObserver = nil
+    }
+    if let kvsObserver {
+      NotificationCenter.default.removeObserver(kvsObserver)
+      self.kvsObserver = nil
+    }
+    pushDebounceTask?.cancel()
+    pushDebounceTask = nil
+    syncInProgress = false
+    pendingSync = false
+    isApplyingCloudChange = false
   }
 
   deinit {

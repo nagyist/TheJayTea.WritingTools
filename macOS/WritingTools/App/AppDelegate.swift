@@ -10,6 +10,7 @@ private let logger = AppLogger.logger("AppDelegate")
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Property to track service-triggered popups
     private var isServiceTriggered: Bool = false
+    private var iCloudSyncObserver: NSObjectProtocol?
     
     let appState = AppState.shared
 
@@ -49,6 +50,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSNotification.Name("CommandsChanged"),
             object: nil
         )
+
+        configureCloudCommandSync(enabled: AppSettings.shared.enableICloudCommandSync)
+        iCloudSyncObserver = NotificationCenter.default.addObserver(
+            forName: .iCloudCommandSyncPreferenceDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.configureCloudCommandSync(enabled: AppSettings.shared.enableICloudCommandSync)
+            }
+        }
     }
 
     @objc private func setupCommandShortcuts() {
@@ -88,12 +100,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
 
-            guard !capture.text.isEmpty else {
-                logger.info("No text selected for command: \(command.name) - pasteboard contained no text")
+            guard !capture.text.isEmpty || !capture.images.isEmpty else {
+                logger.info("No text or images selected for command: \(command.name)")
                 return
             }
 
-            logger.debug("Successfully captured text for command \(command.name) (length: \(capture.text.count) characters)")
+            logger.debug("Captured selection for command \(command.name) (text length: \(capture.text.count), images: \(capture.images.count))")
 
             // Store data in appState
             self.appState.selectedImages = capture.images
@@ -122,30 +134,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         do {
+            let input = try await appState.resolveCommandInput(mode: .textOrImagesWithOCRFallback)
+
             // Get the appropriate provider for this command (respects per-command overrides)
             let provider = appState.getProvider(for: command)
 
             var result = try await provider.processText(
                 systemPrompt: command.prompt,
-                userPrompt: appState.selectedText,
-                images: appState.selectedImages,
+                userPrompt: input.userPrompt,
+                images: input.images,
                 streaming: false
             )
 
             // Preserve trailing newlines from the original selection
             // This is important for triple-click selections which include the trailing newline
             let originalText = appState.selectedText
-            if originalText.hasSuffix("\n") && !result.hasSuffix("\n") {
+            if input.source == .selectedText, originalText.hasSuffix("\n"), !result.hasSuffix("\n") {
                 result += "\n"
                 logger.debug("Added trailing newline to match input")
             }
 
             await MainActor.run {
-                if command.useResponseWindow {
+                let shouldUseResponseWindow = command.useResponseWindow || input.source == .imageOCRFallback
+                if shouldUseResponseWindow {
                     let window = ResponseWindow(
                         title: command.name,
                         content: result,
-                        selectedText: appState.selectedText,
+                        selectedText: input.source == .selectedText ? appState.selectedText : "Image selection (OCR)",
                         option: nil,
                         provider: provider
                     )
@@ -185,6 +200,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSNotification.Name("CommandsChanged"),
             object: nil
         )
+        if let iCloudSyncObserver {
+            NotificationCenter.default.removeObserver(iCloudSyncObserver)
+            self.iCloudSyncObserver = nil
+        }
+        CloudCommandsSync.shared.stop()
         WindowManager.shared.cleanupWindows()
     }
 
@@ -250,6 +270,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func closePopupWindow() {
         WindowManager.shared.dismissPopup()
+    }
+
+    private func configureCloudCommandSync(enabled: Bool) {
+        CloudCommandsSync.shared.setEnabled(enabled)
+        logger.info("iCloud command sync \(enabled ? "enabled" : "disabled")")
     }
 
     func windowWillClose(_ notification: Notification) {

@@ -14,8 +14,7 @@ struct OpenAIProviderSettingsView: View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Configure OpenAI (ChatGPT)")
         .font(.headline)
-      TextField("API Key", text: $settings.openAIApiKey)
-        .textFieldStyle(.roundedBorder)
+      SecureAPIKeyField("API Key", text: $settings.openAIApiKey)
 
       TextField("Base URL (Optional)", text: $settings.openAIBaseURL)
         .textFieldStyle(.roundedBorder)

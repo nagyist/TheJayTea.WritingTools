@@ -91,6 +91,17 @@ struct RetryConfig {
     )
 }
 
+private func durationToNanoseconds(_ duration: Duration) -> Double {
+    let components = duration.components
+    let secondsInNanoseconds = Double(components.seconds) * 1_000_000_000
+    let attosecondsInNanoseconds = Double(components.attoseconds) / 1_000_000_000
+    return max(0, secondsInNanoseconds + attosecondsInNanoseconds)
+}
+
+private func nanosecondsToDuration(_ nanoseconds: Double) -> Duration {
+    .nanoseconds(Int64(max(0, nanoseconds).rounded()))
+}
+
 /// Execute an operation with exponential backoff retry
 /// - Parameters:
 ///   - config: Retry configuration
@@ -124,9 +135,9 @@ nonisolated func withRetry<T: Sendable>(
             try? await Task.sleep(for: currentDelay)
 
             // Increase delay for next attempt, capped at maxDelay
-            let nextDelayNanos = Double(currentDelay.components.attoseconds) / 1_000_000_000 * config.multiplier
-            let maxDelayNanos = Double(config.maxDelay.components.attoseconds) / 1_000_000_000
-            currentDelay = .nanoseconds(Int64(min(nextDelayNanos, maxDelayNanos) * 1_000_000_000))
+            let nextDelayNanos = durationToNanoseconds(currentDelay) * config.multiplier
+            let maxDelayNanos = durationToNanoseconds(config.maxDelay)
+            currentDelay = nanosecondsToDuration(min(nextDelayNanos, maxDelayNanos))
         }
     }
 

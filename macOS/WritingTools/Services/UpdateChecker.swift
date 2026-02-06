@@ -14,6 +14,7 @@ final class UpdateChecker {
     var isCheckingForUpdates = false
     var updateAvailable = false
     var checkError: String?
+    var hasCheckedForUpdates = false
 
     private init() {}
 
@@ -64,6 +65,7 @@ final class UpdateChecker {
         
         defer {
             isCheckingForUpdates = false
+            hasCheckedForUpdates = true
         }
         
         guard let url = URL(string: updateCheckURL) else {

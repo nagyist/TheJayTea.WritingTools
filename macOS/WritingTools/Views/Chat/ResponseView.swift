@@ -176,6 +176,19 @@ struct ResponseView: View {
                         }
                     }
                 }
+                .onChange(of: viewModel.messages.last?.content) { _, _ in
+                    guard let lastMessage = viewModel.messages.last, lastMessage.isStreaming else {
+                        return
+                    }
+
+                    if reduceMotion {
+                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                    } else {
+                        withAnimation(.linear(duration: 0.1)) {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                        }
+                    }
+                }
             }
             
             // Input area
@@ -258,22 +271,31 @@ struct ChatMessageView: View {
     @ViewBuilder
     private func bubbleView(role: String) -> some View {
         VStack(alignment: role == "assistant" ? .leading : .trailing, spacing: 2) {
-            RichMarkdownView(text: message.content, fontSize: fontSize)
-                // Keep markdown constrained to bubble width while allowing vertical growth.
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
-                .textSelection(.enabled)
-                .chatBubbleStyle(isFromUser: message.role == "user")
-                .accessibilityLabel(message.role == "user" ? "Your message" : "Assistant's response")
-                .accessibilityValue(message.content)
-                .contextMenu {
-                    Button("Copy Selection") {
-                        NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
-                    }
-                    Button("Copy Message") {
-                        copyEntireMessage()
-                    }
+            Group {
+                if message.isStreaming && role == "assistant" {
+                    Text(message.content.isEmpty ? " " : message.content)
+                        .font(.system(size: fontSize))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                } else {
+                    RichMarkdownView(text: message.content, fontSize: fontSize)
+                        // Keep markdown constrained to bubble width while allowing vertical growth.
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
+                        .textSelection(.enabled)
                 }
+            }
+            .chatBubbleStyle(isFromUser: message.role == "user")
+            .accessibilityLabel(message.role == "user" ? "Your message" : "Assistant's response")
+            .accessibilityValue(message.content)
+            .contextMenu {
+                Button("Copy Selection") {
+                    NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+                }
+                Button("Copy Message") {
+                    copyEntireMessage()
+                }
+            }
             
             // Timestamp, streaming indicator, and copy button
             HStack(spacing: 8) {
@@ -412,6 +434,8 @@ final class ResponseViewModel {
             let userPrompt = buildUserPrompt(question: question)
             
             var accumulatedContent = ""
+            var lastUIFlushTime = ContinuousClock.now
+            let minUIFlushInterval: Duration = .milliseconds(80)
             
             // Use streaming API
             try await provider.processTextStreaming(
@@ -420,9 +444,13 @@ final class ResponseViewModel {
                 images: [] // Follow-up questions don't include images
             ) { [self] chunk in
                 accumulatedContent += chunk
-                // Update the message in place for real-time display
-                if messageIndex < messages.count {
-                    messages[messageIndex].content = accumulatedContent
+                let now = ContinuousClock.now
+                if now - lastUIFlushTime >= minUIFlushInterval {
+                    // Throttle UI updates while streaming to reduce render pressure.
+                    if messageIndex < messages.count {
+                        messages[messageIndex].content = accumulatedContent
+                    }
+                    lastUIFlushTime = now
                 }
             }
             

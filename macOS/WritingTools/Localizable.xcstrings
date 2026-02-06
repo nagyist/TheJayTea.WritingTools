@@ -533,6 +533,7 @@
       }
     },
     "All changes saved" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -687,6 +688,7 @@
       }
     },
     "API Key" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -817,9 +819,6 @@
           }
         }
       }
-    },
-    "Applies settings and closes the window" : {
-
     },
     "Apply %@ to selected text" : {
 
@@ -1287,6 +1286,9 @@
         }
       }
     },
+    "Changes apply automatically" : {
+
+    },
     "Check for Updates" : {
       "localizations" : {
         "de" : {
@@ -1541,6 +1543,12 @@
 
     },
     "Close popup" : {
+
+    },
+    "Close settings." : {
+
+    },
+    "Closes the settings window" : {
 
     },
     "Command Name" : {
@@ -2428,6 +2436,9 @@
           }
         }
       }
+    },
+    "Done" : {
+
     },
     "Download %@" : {
       "localizations" : {
@@ -3761,6 +3772,9 @@
         }
       }
     },
+    "Hide %@" : {
+
+    },
     "How it works" : {
       "localizations" : {
         "de" : {
@@ -4006,6 +4020,9 @@
           }
         }
       }
+    },
+    "Keep your command list in sync across your signed-in Apple devices." : {
+
     },
     "Key Points" : {
       "comment" : "ID for key points extraction",
@@ -4837,6 +4854,9 @@
         }
       }
     },
+    "Not checked yet." : {
+
+    },
     "Notes" : {
       "localizations" : {
         "de" : {
@@ -5449,6 +5469,7 @@
       }
     },
     "Or Custom Model Name" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6286,6 +6307,9 @@
     "Returns text size to the default" : {
 
     },
+    "Reveal %@" : {
+
+    },
     "Rewrite" : {
       "comment" : "ID for rewriting",
       "localizations" : {
@@ -6401,6 +6425,7 @@
       }
     },
     "Save your changes and close settings." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6845,6 +6870,9 @@
           }
         }
       }
+    },
+    "Sync commands with iCloud" : {
+
     },
     "Table" : {
       "comment" : "ID for table conversion",
@@ -7380,6 +7408,9 @@
           }
         }
       }
+    },
+    "Uses iCloud key-value storage to sync command edits across devices." : {
+
     },
     "Version & Updates" : {
       "localizations" : {

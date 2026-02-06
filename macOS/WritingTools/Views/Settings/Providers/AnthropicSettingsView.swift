@@ -11,6 +11,7 @@ import AppKit
 struct AnthropicSettingsView: View {
     @Bindable var settings = AppSettings.shared
     @Binding var needsSaving: Bool
+    @State private var modelSelection: AnthropicModel = .claude45Sonnet
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -20,8 +21,7 @@ struct AnthropicSettingsView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     
-                    TextField("API Key", text: $settings.anthropicApiKey)
-                        .textFieldStyle(.roundedBorder)
+                    SecureAPIKeyField("API Key", text: $settings.anthropicApiKey)
                         .onChange(of: settings.anthropicApiKey) { _, _ in needsSaving = true }
                 }
                 
@@ -30,19 +30,26 @@ struct AnthropicSettingsView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     
-                    Picker("Model", selection: $settings.anthropicModel) {
+                    Picker("Model", selection: $modelSelection) {
                         ForEach(AnthropicModel.allCases, id: \.self) { model in
-                            Text(model.displayName).tag(model.rawValue)
+                            Text(model.displayName).tag(model)
                         }
                     }
                     .pickerStyle(.menu)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .onChange(of: settings.anthropicModel) { _, _ in needsSaving = true }
+                    .onChange(of: modelSelection) { _, newValue in
+                        if newValue != .custom {
+                            settings.anthropicModel = newValue.rawValue
+                        }
+                        needsSaving = true
+                    }
                     
-                    TextField("Or Custom Model Name", text: $settings.anthropicModel)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.caption)
-                        .onChange(of: settings.anthropicModel) { _, _ in needsSaving = true }
+                    if modelSelection == .custom {
+                        TextField("Custom Model Name", text: $settings.anthropicModel)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                            .onChange(of: settings.anthropicModel) { _, _ in needsSaving = true }
+                    }
                     Text("E.g., \(AnthropicModel.claude45Haiku.rawValue), \(AnthropicModel.claude45Sonnet.rawValue), etc.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -57,6 +64,20 @@ struct AnthropicSettingsView: View {
             }
             .buttonStyle(.link)
             .help("Open Anthropic console to create or view your API key.")
+        }
+        .onAppear {
+            syncModelSelection(settings.anthropicModel)
+        }
+        .onChange(of: settings.anthropicModel) { _, newValue in
+            syncModelSelection(newValue)
+        }
+    }
+
+    private func syncModelSelection(_ modelName: String) {
+        if let knownModel = AnthropicModel(rawValue: modelName), knownModel != .custom {
+            modelSelection = knownModel
+        } else {
+            modelSelection = .custom
         }
     }
 }

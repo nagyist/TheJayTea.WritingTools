@@ -81,6 +81,11 @@ struct AboutView: View {
                             .foregroundStyle(.green)
                             .font(.caption)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if !updateChecker.hasCheckedForUpdates {
+                        Text("Not checked yet.")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text("The latest version is already installed!")
                             .foregroundStyle(.green)

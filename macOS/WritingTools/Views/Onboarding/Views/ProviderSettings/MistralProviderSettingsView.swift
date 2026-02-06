@@ -14,8 +14,7 @@ struct MistralProviderSettingsView: View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Configure Mistral AI")
         .font(.headline)
-      TextField("API Key", text: $settings.mistralApiKey)
-        .textFieldStyle(.roundedBorder)
+      SecureAPIKeyField("API Key", text: $settings.mistralApiKey)
 
       Picker("Model", selection: $settings.mistralModel) {
         ForEach(MistralModel.allCases, id: \.self) { model in

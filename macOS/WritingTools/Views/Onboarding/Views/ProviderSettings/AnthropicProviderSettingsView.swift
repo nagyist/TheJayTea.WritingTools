@@ -9,25 +9,32 @@ import SwiftUI
 
 struct AnthropicProviderSettingsView: View {
   @Bindable var settings: AppSettings
+  @State private var modelSelection: AnthropicModel = .claude45Sonnet
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Configure Anthropic (Claude)")
         .font(.headline)
-      TextField("API Key", text: $settings.anthropicApiKey)
-        .textFieldStyle(.roundedBorder)
+      SecureAPIKeyField("API Key", text: $settings.anthropicApiKey)
 
-      Picker("Model", selection: $settings.anthropicModel) {
+      Picker("Model", selection: $modelSelection) {
         ForEach(AnthropicModel.allCases, id: \.self) { model in
-          Text(model.displayName).tag(model.rawValue)
+          Text(model.displayName).tag(model)
         }
       }
       .pickerStyle(.menu)
       .frame(maxWidth: .infinity, alignment: .leading)
+      .onChange(of: modelSelection) { _, newValue in
+        if newValue != .custom {
+          settings.anthropicModel = newValue.rawValue
+        }
+      }
 
-      TextField("Or Custom Model Name", text: $settings.anthropicModel)
-        .textFieldStyle(.roundedBorder)
-        .font(.caption)
+      if modelSelection == .custom {
+        TextField("Custom Model Name", text: $settings.anthropicModel)
+          .textFieldStyle(.roundedBorder)
+          .font(.caption)
+      }
 
       Text(
         "E.g., \(AnthropicModel.allCases.map { $0.rawValue }.joined(separator: ", "))"
@@ -42,6 +49,20 @@ struct AnthropicProviderSettingsView: View {
         }
       }
       .buttonStyle(.link)
+    }
+    .onAppear {
+      syncModelSelection(settings.anthropicModel)
+    }
+    .onChange(of: settings.anthropicModel) { _, newValue in
+      syncModelSelection(newValue)
+    }
+  }
+
+  private func syncModelSelection(_ modelName: String) {
+    if let knownModel = AnthropicModel(rawValue: modelName), knownModel != .custom {
+      modelSelection = knownModel
+    } else {
+      modelSelection = .custom
     }
   }
 }

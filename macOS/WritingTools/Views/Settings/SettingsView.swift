@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var needsSaving: Bool = false
     @State private var showingCommandsManager = false
     @State private var hostingWindow: NSWindow?
+    @State private var pendingProviderApplyTask: Task<Void, Never>?
 
     // Validation alert state
     @State private var showingValidationAlert = false
@@ -80,7 +81,7 @@ struct SettingsView: View {
                     Label("AI Provider", systemImage: SettingsTab.aiProvider.systemImage)
                 }
             }
-            .padding(20)
+            .padding(16)
         }
         .frame(minWidth: 520, idealWidth: 540, maxWidth: 720, minHeight: 470, idealHeight: showOnlyApiSetup ? 470 : 540, maxHeight: 820)
         .background(WindowAccessor { window in
@@ -94,8 +95,12 @@ struct SettingsView: View {
                                       forKey: "lastSettingsTab")
             updateWindowTitle(to: newValue)
         }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("CommandsChanged"))) { _ in
-            needsSaving = true
+        .onChange(of: providerApplySignature) { _, _ in
+            scheduleProviderApply()
+        }
+        .onDisappear {
+            pendingProviderApplyTask?.cancel()
+            appState.saveCurrentProviderSettings()
         }
         .alert("Settings Incomplete", isPresented: $showingValidationAlert) {
             Button("OK", role: .cancel) {}
@@ -120,20 +125,18 @@ struct SettingsView: View {
     
     private var saveButton: some View {
         HStack(spacing: 8) {
-            if !needsSaving {
-                Text("All changes saved")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text("Changes apply automatically")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Spacer()
-            Button("Save Changes") {
+            Button("Done") {
                 saveSettings()
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return)
-            .help("Save your changes and close settings.")
-            .accessibilityLabel("Save changes")
-            .accessibilityHint("Applies settings and closes the window")
+            .help("Close settings.")
+            .accessibilityLabel("Done")
+            .accessibilityHint("Closes the settings window")
         }
     }
     
@@ -148,17 +151,17 @@ struct SettingsView: View {
     }
     
     private func saveSettings() {
-        if let validationError = validateProviderSettings() {
+        if showOnlyApiSetup, let validationError = validateProviderSettings() {
             showValidationAlert(message: validationError)
             return
         }
 
+        pendingProviderApplyTask?.cancel()
+        appState.saveCurrentProviderSettings()
+
         let oldShortcut = UserDefaults.standard.string(forKey: "shortcut")
 
         UserDefaults.standard.set(settings.shortcutText, forKey: "shortcut")
-
-        // Use the unified save method from AppState
-        appState.saveCurrentProviderSettings()
 
         if oldShortcut != settings.shortcutText {
             NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: nil)
@@ -171,12 +174,48 @@ struct SettingsView: View {
         needsSaving = false
 
         Task { @MainActor in
-            if self.showOnlyApiSetup {
-                WindowManager.shared.cleanupWindows()
+            if let hostingWindow {
+                hostingWindow.close()
             } else {
                 WindowManager.shared.closeSettingsWindow()
             }
         }
+    }
+
+    private func scheduleProviderApply() {
+        pendingProviderApplyTask?.cancel()
+        pendingProviderApplyTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            appState.saveCurrentProviderSettings()
+            needsSaving = false
+        }
+    }
+
+    private var providerApplySignature: String {
+        [
+            settings.currentProvider,
+            settings.geminiApiKey,
+            settings.geminiModel.rawValue,
+            settings.geminiCustomModel,
+            settings.openAIApiKey,
+            settings.openAIBaseURL,
+            settings.openAIModel,
+            settings.openAIOrganization ?? "",
+            settings.openAIProject ?? "",
+            settings.mistralApiKey,
+            settings.mistralBaseURL,
+            settings.mistralModel,
+            settings.anthropicApiKey,
+            settings.anthropicModel,
+            settings.openRouterApiKey,
+            settings.openRouterModel,
+            settings.openRouterCustomModel,
+            settings.ollamaBaseURL,
+            settings.ollamaModel,
+            settings.ollamaKeepAlive,
+            settings.ollamaImageMode.rawValue,
+        ].joined(separator: "|")
     }
 
     private func validateProviderSettings() -> String? {

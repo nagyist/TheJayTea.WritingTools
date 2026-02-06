@@ -112,7 +112,7 @@ class WindowManager: NSObject, NSWindowDelegate {
             self.settingsWindow.setObject(hostingView, forKey: settingsWindow)
 
             // ✓ Center window BEFORE display
-            settingsWindow.level = .floating
+            settingsWindow.level = .normal
             settingsWindow.center()
             
             NSApp.activate(ignoringOtherApps: true)
@@ -190,9 +190,12 @@ class WindowManager: NSObject, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        if !(window is PopupWindow) {
-            performOnMainThread {
-                window.level = .floating
+        performOnMainThread { [weak self] in
+            guard let self = self else { return }
+            let isOnboardingWindow = self.onboardingWindow.object(forKey: window) != nil
+            let preferredLevel: NSWindow.Level = (window is PopupWindow || isOnboardingWindow) ? .floating : .normal
+            if window.level != preferredLevel {
+                window.level = preferredLevel
             }
         }
     }

@@ -4,6 +4,22 @@ import UniformTypeIdentifiers
 
 private let logger = AppLogger.logger("AppState")
 
+enum CommandInputMode: Sendable, Equatable {
+    case textOnly
+    case textOrImagesWithOCRFallback
+}
+
+struct CommandExecutionInput: Sendable {
+    enum Source: Sendable, Equatable {
+        case selectedText
+        case imageOCRFallback
+    }
+
+    let userPrompt: String
+    let images: [Data]
+    let source: Source
+}
+
 @Observable
 @MainActor
 final class AppState {
@@ -407,38 +423,95 @@ final class AppState {
         setCurrentProvider(settings.currentProvider)
     }
 
+    func resolveCommandInput(
+        mode: CommandInputMode = .textOrImagesWithOCRFallback
+    ) async throws -> CommandExecutionInput {
+        let trimmedSelectedText = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedSelectedText.isEmpty {
+            return CommandExecutionInput(
+                userPrompt: selectedText,
+                images: selectedImages,
+                source: .selectedText
+            )
+        }
+
+        guard !selectedImages.isEmpty else {
+            throw NSError(
+                domain: "CommandInput",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Select text or images before running a command."]
+            )
+        }
+
+        guard mode == .textOrImagesWithOCRFallback else {
+            throw NSError(
+                domain: "CommandInput",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "This command requires selected text."]
+            )
+        }
+
+        let ocrText = await OCRManager.shared
+            .extractText(from: selectedImages)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !ocrText.isEmpty else {
+            throw NSError(
+                domain: "CommandInput",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Image-only selection is not supported without readable OCR text. Select text, or use images that contain readable text."]
+            )
+        }
+
+        let ocrPrompt = """
+        The user selected image content without selectable text.
+        Use the extracted OCR text below to complete the request.
+
+        \(ocrText)
+        """
+
+        return CommandExecutionInput(
+            userPrompt: ocrPrompt,
+            images: [],
+            source: .imageOCRFallback
+        )
+    }
+
     // Process a command (unified method for all command types)
     func processCommand(_ command: CommandModel) {
-        guard !selectedText.isEmpty, !isProcessing else { return }
+        guard !isProcessing else { return }
 
         isProcessing = true
 
         Task {
             do {
                 let prompt = command.prompt
+                let input = try await resolveCommandInput()
 
                 // Get the appropriate provider for this command (respects per-command overrides)
                 let provider = getProvider(for: command)
 
                 var result = try await provider.processText(
                     systemPrompt: prompt,
-                    userPrompt: selectedText,
-                    images: [],
+                    userPrompt: input.userPrompt,
+                    images: input.images,
                     streaming: false
                 )
 
                 // Preserve trailing newlines from the original selection
                 // This is important for triple-click selections which include the trailing newline
-                if selectedText.hasSuffix("\n") && !result.hasSuffix("\n") {
+                if input.source == .selectedText, selectedText.hasSuffix("\n"), !result.hasSuffix("\n") {
                     result += "\n"
                     logger.debug("Added trailing newline to match input")
                 }
 
-                if command.useResponseWindow {
+                let shouldUseResponseWindow = command.useResponseWindow || input.source == .imageOCRFallback
+
+                if shouldUseResponseWindow {
                     let window = ResponseWindow(
                         title: "\(command.name) Result",
                         content: result,
-                        selectedText: selectedText,
+                        selectedText: input.source == .selectedText ? selectedText : "Image selection (OCR)",
                         option: nil,
                         provider: provider
                     )

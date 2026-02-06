@@ -199,7 +199,7 @@ struct PopupView: View {
   private func processCommandAndCloseWhenDone(
     _ command: CommandModel
   ) async {
-    guard !appState.selectedText.isEmpty, !appState.isProcessing else {
+    guard !appState.isProcessing else {
       processingCommandId = nil
       return
     }
@@ -208,6 +208,7 @@ struct PopupView: View {
 
     do {
       let systemPrompt = command.prompt
+      let input = try await appState.resolveCommandInput(mode: .textOrImagesWithOCRFallback)
       let userText = appState.selectedText
 
       // Get the appropriate provider for this command (respects per-command overrides)
@@ -215,17 +216,18 @@ struct PopupView: View {
 
       let result = try await provider.processText(
         systemPrompt: systemPrompt,
-        userPrompt: userText,
-        images: appState.selectedImages,
+        userPrompt: input.userPrompt,
+        images: input.images,
         streaming: false
       )
 
       await MainActor.run {
-        if command.useResponseWindow {
+        let shouldUseResponseWindow = command.useResponseWindow || input.source == .imageOCRFallback
+        if shouldUseResponseWindow {
           let window = ResponseWindow(
             title: command.name,
             content: result,
-            selectedText: userText,
+            selectedText: input.source == .selectedText ? userText : "Image selection (OCR)",
             option: .proofread,
             provider: provider
           )

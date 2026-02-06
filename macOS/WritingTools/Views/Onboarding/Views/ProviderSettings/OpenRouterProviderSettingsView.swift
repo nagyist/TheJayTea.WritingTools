@@ -14,8 +14,7 @@ struct OpenRouterProviderSettingsView: View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Configure OpenRouter")
         .font(.headline)
-      TextField("API Key", text: $settings.openRouterApiKey)
-        .textFieldStyle(.roundedBorder)
+      SecureAPIKeyField("API Key", text: $settings.openRouterApiKey)
 
       Picker("Model", selection: $settings.openRouterModel) {
         ForEach(OpenRouterModel.allCases, id: \.self) { model in

@@ -1,6 +1,10 @@
 import Foundation
 import Observation
 
+extension Notification.Name {
+    static let iCloudCommandSyncPreferenceDidChange = Notification.Name("iCloudCommandSyncPreferenceDidChange")
+}
+
 // A singleton for app-wide settings that wraps UserDefaults access
 @Observable
 @MainActor
@@ -10,6 +14,7 @@ final class AppSettings {
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let keychain = KeychainManager.shared
     @ObservationIgnored private var keychainWriteTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var keychainWriteGenerations: [String: UInt64] = [:]
     @ObservationIgnored private let keychainWriteDelay: Duration = .milliseconds(350)
     
     // MARK: - Published Settings
@@ -146,6 +151,13 @@ final class AppSettings {
     var openCustomCommandsInResponseWindow: Bool {
         didSet { defaults.set(openCustomCommandsInResponseWindow, forKey: "open_custom_commands_in_response_window") }
     }
+
+    var enableICloudCommandSync: Bool {
+        didSet {
+            defaults.set(enableICloudCommandSync, forKey: "enable_icloud_command_sync")
+            NotificationCenter.default.post(name: .iCloudCommandSyncPreferenceDidChange, object: nil)
+        }
+    }
     
     // MARK: - Init
     private init() {
@@ -202,26 +214,40 @@ final class AppSettings {
         
         // Custom commands setting - default to true (open in response window)
         self.openCustomCommandsInResponseWindow = defaults.object(forKey: "open_custom_commands_in_response_window") as? Bool ?? true
+
+        // Cloud command sync setting defaults to false until explicitly enabled.
+        self.enableICloudCommandSync = defaults.object(forKey: "enable_icloud_command_sync") as? Bool ?? false
     }
 
     deinit {
         keychainWriteTasks.values.forEach { $0.cancel() }
         keychainWriteTasks.removeAll()
+        keychainWriteGenerations.removeAll()
     }
 
     private func scheduleKeychainWrite(_ value: String, forKey key: String) {
+        let generation = (keychainWriteGenerations[key] ?? 0) + 1
+        keychainWriteGenerations[key] = generation
         keychainWriteTasks[key]?.cancel()
 
         keychainWriteTasks[key] = Task { [weak self] in
             guard let self else { return }
-            defer { self.keychainWriteTasks[key] = nil }
+            defer { self.clearKeychainWriteTaskReference(forKey: key, generation: generation) }
             try? await Task.sleep(for: self.keychainWriteDelay)
             guard !Task.isCancelled else { return }
             let keychainRef = self.keychain
+            let valueToSave = value
+            let keyToSave = key
             Task.detached(priority: .utility) {
-                try? keychainRef.save(value, forKey: key)
+                try? keychainRef.save(valueToSave, forKey: keyToSave)
             }
         }
+    }
+
+    private func clearKeychainWriteTaskReference(forKey key: String, generation: UInt64) {
+        guard keychainWriteGenerations[key] == generation else { return }
+        keychainWriteTasks[key] = nil
+        keychainWriteGenerations[key] = nil
     }
     
     // MARK: - Convenience
