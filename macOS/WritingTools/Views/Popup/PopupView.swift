@@ -247,11 +247,11 @@ struct PopupView: View {
           images: input.images
         )
 
+        // Dismiss the popup without reactivating the previous app,
+        // so the response window stays in front.
+        WindowManager.shared.dismissPopup()
         WindowManager.shared.addResponseWindow(window)
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
 
-        closeAction()
         processingCommandId = nil
       } else {
         // Inline replacement: need the full response before pasting
@@ -326,14 +326,14 @@ struct PopupView: View {
         images: appState.selectedImages
       )
 
+      // Dismiss the popup without reactivating the previous app,
+      // so the response window stays in front.
+      WindowManager.shared.dismissPopup()
       WindowManager.shared.addResponseWindow(window)
-      window.makeKeyAndOrderFront(nil)
-      window.orderFrontRegardless()
 
       customText = ""
       isCustomLoading = false
       appState.isProcessing = false
-      closeAction()
     } else {
       // Inline replacement: need the full response before pasting
       Task {

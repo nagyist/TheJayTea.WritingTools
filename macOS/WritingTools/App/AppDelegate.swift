@@ -163,10 +163,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         provider: provider
                     )
 
-                    NSApp.activate()
                     WindowManager.shared.addResponseWindow(window)
-                    window.makeKeyAndOrderFront(nil)
-                    window.orderFrontRegardless()
                 } else {
                     if command.preserveFormatting, appState.selectedAttributedText != nil {
                         appState.replaceSelectedTextPreservingAttributes(with: result)

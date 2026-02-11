@@ -50,112 +50,13 @@ struct MeshLikeGradientBackground: View {
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
-        // Use MeshGradient on macOS 15+ for better performance, fall back to optimized implementation
-        if #available(macOS 15.0, *) {
-            MeshGradientBackground(colorScheme: colorScheme)
-        } else {
-            LegacyMeshGradientBackground(colorScheme: colorScheme)
-        }
-    }
-}
-
-/// Modern MeshGradient implementation for macOS 15+
-/// Uses hardware-accelerated mesh gradient for optimal performance
-@available(macOS 15.0, *)
-struct MeshGradientBackground: View {
-    let colorScheme: ColorScheme
-    
-    var body: some View {
-        if colorScheme == .light {
-            MeshGradient(
-                width: 3,
-                height: 3,
-                points: [
-                    [0.0, 0.0], [0.5, 0.0], [1.0, 0.0],
-                    [0.0, 0.5], [0.5, 0.5], [1.0, 0.5],
-                    [0.0, 1.0], [0.5, 1.0], [1.0, 1.0]
-                ],
-                colors: [
-                    Color(hex: "f1f5f9"), Color(hex: "a5f3fc"), Color(hex: "818cf8"),
-                    Color(hex: "e2e8f0"), Color(hex: "bae6fd"), Color(hex: "a5b4fc"),
-                    Color(hex: "f1f5f9"), Color(hex: "a5f3fc"), Color(hex: "818cf8")
-                ]
-            )
-        } else {
-            MeshGradient(
-                width: 3,
-                height: 3,
-                points: [
-                    [0.0, 0.0], [0.5, 0.0], [1.0, 0.0],
-                    [0.0, 0.5], [0.5, 0.5], [1.0, 0.5],
-                    [0.0, 1.0], [0.5, 1.0], [1.0, 1.0]
-                ],
-                colors: [
-                    Color(hex: "083344"), Color(hex: "6366f1"), Color(hex: "881337"),
-                    Color(hex: "0c4a5e"), Color(hex: "4f46e5"), Color(hex: "9f1239"),
-                    Color(hex: "083344"), Color(hex: "6366f1"), Color(hex: "881337")
-                ]
-            )
-        }
-    }
-}
-
-/// Optimized legacy gradient for macOS < 15
-/// Uses fewer shapes and caches the gradient layer
-struct LegacyMeshGradientBackground: View {
-    let colorScheme: ColorScheme
-    
-    var body: some View {
-        Canvas { context, size in
-            // Draw base color
-            let baseColor = colorScheme == .light 
-                ? Color(hex: "f1f5f9") 
-                : Color(hex: "083344")
-            context.fill(
-                Path(CGRect(origin: .zero, size: size)),
-                with: .color(baseColor)
-            )
-            
-            // Define gradient colors based on color scheme
-            let colors: [(Color, CGPoint, CGFloat)] = colorScheme == .light ? [
-                (Color(hex: "a5f3fc").opacity(0.6), CGPoint(x: 0.5, y: 0.2), 0.5),
-                (Color(hex: "818cf8").opacity(0.5), CGPoint(x: 0.85, y: 0.3), 0.4),
-                (Color(hex: "a5f3fc").opacity(0.6), CGPoint(x: 0.5, y: 0.8), 0.5),
-                (Color(hex: "818cf8").opacity(0.5), CGPoint(x: 0.15, y: 0.7), 0.4)
-            ] : [
-                (Color(hex: "6366f1").opacity(0.6), CGPoint(x: 0.5, y: 0.2), 0.5),
-                (Color(hex: "881337").opacity(0.5), CGPoint(x: 0.85, y: 0.3), 0.4),
-                (Color(hex: "6366f1").opacity(0.6), CGPoint(x: 0.5, y: 0.8), 0.5),
-                (Color(hex: "881337").opacity(0.5), CGPoint(x: 0.15, y: 0.7), 0.4)
-            ]
-            
-            // Draw radial gradients for each color blob
-            for (color, relativeCenter, relativeRadius) in colors {
-                let center = CGPoint(
-                    x: size.width * relativeCenter.x,
-                    y: size.height * relativeCenter.y
-                )
-                let radius = max(size.width, size.height) * relativeRadius
-                
-                let gradient = Gradient(colors: [color, color.opacity(0)])
-                context.fill(
-                    Path(ellipseIn: CGRect(
-                        x: center.x - radius,
-                        y: center.y - radius,
-                        width: radius * 2,
-                        height: radius * 2
-                    )),
-                    with: .radialGradient(
-                        gradient,
-                        center: center,
-                        startRadius: 0,
-                        endRadius: radius
-                    )
-                )
-            }
-        }
-        // Use drawingGroup to rasterize and cache the gradient
-        .drawingGroup(opaque: true)
+        LinearGradient(
+            colors: colorScheme == .light
+                ? [Color(hex: "d4bfff"), Color(hex: "f5e6f8")]
+                : [Color(hex: "452E6B"), Color(hex: "703F3F")],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 }
 

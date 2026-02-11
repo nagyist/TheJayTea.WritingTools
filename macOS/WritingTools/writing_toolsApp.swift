@@ -37,9 +37,12 @@ struct MenuBarMenu: View {
             // For accessory apps, activate after opening so the window
             // comes to front above other applications.
             DispatchQueue.main.async {
-                NSApp.activate()
-                NSApp.windows.first { $0.isVisible && $0.canBecomeKey }?
-                    .orderFrontRegardless()
+                if let settingsWindow = NSApp.windows.first(where: {
+                    $0.identifier?.rawValue == "com_apple_SwiftUI_Settings_window"
+                        || $0.title.contains("Settings")
+                }), settingsWindow.isVisible {
+                    WindowManager.shared.bringWindowToFront(settingsWindow)
+                }
             }
         }
         .keyboardShortcut(",", modifiers: .command)
@@ -90,13 +93,9 @@ struct MenuBarMenu: View {
     @State private var aboutWindow: NSWindow?
 
     private func showAboutWindow() {
-        // Activate app first to ensure window becomes active
-        NSApp.activate()
-
         // Reuse existing window if it's still open
         if let existing = aboutWindow, existing.isVisible {
-            existing.makeKeyAndOrderFront(nil)
-            existing.orderFrontRegardless()
+            WindowManager.shared.bringWindowToFront(existing)
             return
         }
 
@@ -114,9 +113,8 @@ struct MenuBarMenu: View {
         window.contentView = hostingView
         window.title = "About Writing Tools"
         window.center()
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
 
+        WindowManager.shared.bringWindowToFront(window)
         aboutWindow = window
     }
 }

@@ -30,7 +30,18 @@ class WindowManager: NSObject, NSWindowDelegate {
             responseWindows.add(window)
             window.delegate = self
         }
+        bringWindowToFront(window)
+    }
+
+    /// Activates the app and brings the given window to the front.
+    ///
+    /// Accessory apps (`NSApp.activationPolicy == .accessory`) don't appear in the
+    /// Dock, so `NSApp.activate()` alone may not suffice. `orderFrontRegardless()`
+    /// ensures the window appears above other apps even if activation is delayed.
+    func bringWindowToFront(_ window: NSWindow) {
+        NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     func removeResponseWindow(_ window: ResponseWindow) {
