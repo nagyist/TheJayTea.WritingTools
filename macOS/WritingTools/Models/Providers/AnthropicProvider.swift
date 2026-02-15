@@ -33,17 +33,10 @@ final class AnthropicProvider: AIProvider {
     var isProcessing = false
     
     private var config: AnthropicConfig
-    private var aiProxyService: AnthropicService?
     private var currentTask: Task<String, Error>?
     
     init(config: AnthropicConfig) {
         self.config = config
-        setupAIProxyService()
-    }
-    
-    private func setupAIProxyService() {
-        guard !config.apiKey.isEmpty else { return }
-        aiProxyService = AIProxy.anthropicDirectService(unprotectedAPIKey: config.apiKey)
     }
     
     func processText(
@@ -183,6 +176,7 @@ final class AnthropicProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
+            currentTask = nil
         }
 
         guard !config.apiKey.isEmpty else {
@@ -211,29 +205,34 @@ final class AnthropicProvider: AIProvider {
             system: systemPrompt.map(AnthropicSystemPrompt.text)
         )
 
-        do {
-            let stream = try await anthropicService.streamingMessageRequest(
-                body: requestBody,
-                secondsToWait: 60
-            )
-            for try await event in stream {
-                if Task.isCancelled { break }
-                guard case let .contentBlockDelta(contentBlockDelta) = event else { continue }
-                switch contentBlockDelta.delta {
-                case .textDelta(let textDelta):
-                    onChunk(textDelta.text)
-                case .inputJSONDelta, .citationsDelta, .thinkingDelta, .signatureDelta, .futureProof:
-                    continue
+        let task = Task<String, Error> {
+            do {
+                let stream = try await anthropicService.streamingMessageRequest(
+                    body: requestBody,
+                    secondsToWait: 60
+                )
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    guard case let .contentBlockDelta(contentBlockDelta) = event else { continue }
+                    switch contentBlockDelta.delta {
+                    case .textDelta(let textDelta):
+                        onChunk(textDelta.text)
+                    case .inputJSONDelta, .citationsDelta, .thinkingDelta, .signatureDelta, .futureProof:
+                        continue
+                    }
                 }
+            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+                logger.error("Anthropic streaming error (\(statusCode)): \(responseBody)")
+                throw NSError(domain: "AnthropicAPI", code: statusCode,
+                              userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+            } catch {
+                logger.error("Anthropic streaming failed: \(error.localizedDescription)")
+                throw error
             }
-        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-            logger.error("Anthropic streaming error (\(statusCode)): \(responseBody)")
-            throw NSError(domain: "AnthropicAPI", code: statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-        } catch {
-            logger.error("Anthropic streaming failed: \(error.localizedDescription)")
-            throw error
+            return ""
         }
+        currentTask = task
+        _ = try await task.value
     }
 
     func cancel() {

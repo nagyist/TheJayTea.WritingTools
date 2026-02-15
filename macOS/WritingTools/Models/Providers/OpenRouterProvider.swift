@@ -35,17 +35,10 @@ final class OpenRouterProvider: AIProvider {
     var isProcessing = false
     
     private var config: OpenRouterConfig
-    private var aiProxyService: OpenRouterService?
     private var currentTask: Task<String, Error>?
     
     init(config: OpenRouterConfig) {
         self.config = config
-        setupAIProxyService()
-    }
-    
-    private func setupAIProxyService() {
-        guard !config.apiKey.isEmpty else { return }
-        aiProxyService = AIProxy.openRouterDirectService(unprotectedAPIKey: config.apiKey)
     }
     
     func processText(
@@ -142,7 +135,10 @@ final class OpenRouterProvider: AIProvider {
         onChunk: @escaping @MainActor (String) -> Void
     ) async throws {
         isProcessing = true
-        defer { isProcessing = false }
+        defer {
+            isProcessing = false
+            currentTask = nil
+        }
 
         guard !config.apiKey.isEmpty else {
             throw NSError(domain: "OpenRouterAPI", code: -1,
@@ -177,22 +173,27 @@ final class OpenRouterProvider: AIProvider {
             route: .fallback
         )
 
-        do {
-            let stream = try await openRouterService.streamingChatCompletionRequest(body: requestBody)
-            for try await chunk in stream {
-                if Task.isCancelled { break }
-                if let content = chunk.choices.first?.delta.content {
-                    onChunk(content)
+        let task = Task<String, Error> {
+            do {
+                let stream = try await openRouterService.streamingChatCompletionRequest(body: requestBody)
+                for try await chunk in stream {
+                    if Task.isCancelled { break }
+                    if let content = chunk.choices.first?.delta.content {
+                        onChunk(content)
+                    }
                 }
+            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+                logger.error("OpenRouter streaming error (\(statusCode)): \(responseBody)")
+                throw NSError(domain: "OpenRouterAPI", code: statusCode,
+                              userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+            } catch {
+                logger.error("OpenRouter streaming failed: \(error.localizedDescription)")
+                throw error
             }
-        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-            logger.error("OpenRouter streaming error (\(statusCode)): \(responseBody)")
-            throw NSError(domain: "OpenRouterAPI", code: statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-        } catch {
-            logger.error("OpenRouter streaming failed: \(error.localizedDescription)")
-            throw error
+            return ""
         }
+        currentTask = task
+        _ = try await task.value
     }
 
     func cancel() {

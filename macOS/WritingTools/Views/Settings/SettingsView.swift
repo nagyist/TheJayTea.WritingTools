@@ -151,7 +151,7 @@ struct SettingsView: View {
     }
     
     private func saveSettings() {
-        if showOnlyApiSetup, let validationError = validateProviderSettings() {
+        if let validationError = validateProviderSettings() {
             showValidationAlert(message: validationError)
             return
         }

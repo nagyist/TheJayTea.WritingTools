@@ -9,6 +9,7 @@ import AppKit
 
 private let logger = AppLogger.logger("ClipboardWait")
 
+@MainActor
 @discardableResult
 func waitForPasteboardUpdate(
   _ pb: NSPasteboard,

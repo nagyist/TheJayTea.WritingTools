@@ -296,7 +296,7 @@ struct ChatMessageView: View {
                     RichMarkdownView(text: message.content, fontSize: fontSize)
                         // Keep markdown constrained to bubble width while allowing vertical growth.
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }
             }
@@ -447,7 +447,8 @@ final class ResponseViewModel {
 
     /// Streams the initial AI response into the first message.
     private func streamInitialResponse(systemPrompt: String, userPrompt: String, images: [Data]) async {
-        let messageIndex = 0
+        // Track by message ID instead of index to avoid out-of-bounds if array mutates
+        guard let messageId = messages.first?.id else { return }
 
         do {
             var accumulatedContent = ""
@@ -462,8 +463,8 @@ final class ResponseViewModel {
                 accumulatedContent += chunk
                 let now = ContinuousClock.now
                 if now - lastUIFlushTime >= minUIFlushInterval {
-                    if messageIndex < messages.count {
-                        messages[messageIndex].content = accumulatedContent
+                    if let idx = messages.firstIndex(where: { $0.id == messageId }) {
+                        messages[idx].content = accumulatedContent
                     }
                     lastUIFlushTime = now
                 }
@@ -471,18 +472,18 @@ final class ResponseViewModel {
 
             let normalizedResponse = accumulatedContent.normalizedForMarkdown()
 
-            if messageIndex < messages.count {
-                messages[messageIndex].content = normalizedResponse
-                messages[messageIndex].isStreaming = false
+            if let idx = messages.firstIndex(where: { $0.id == messageId }) {
+                messages[idx].content = normalizedResponse
+                messages[idx].isStreaming = false
             }
 
             conversationHistory.append((role: "assistant", content: normalizedResponse))
             isProcessing = false
         } catch {
             // Show error in the streaming message rather than removing it
-            if messageIndex < messages.count {
-                messages[messageIndex].content = "Error: \(error.localizedDescription)"
-                messages[messageIndex].isStreaming = false
+            if let idx = messages.firstIndex(where: { $0.id == messageId }) {
+                messages[idx].content = "Error: \(error.localizedDescription)"
+                messages[idx].isStreaming = false
             }
             isProcessing = false
         }
@@ -508,10 +509,10 @@ final class ResponseViewModel {
         
         isProcessing = true
         
-        // Create a placeholder message for streaming
+        // Create a placeholder message for streaming, tracked by ID not index
         let streamingMessage = ChatMessage(role: "assistant", content: "", isStreaming: true)
+        let messageId = streamingMessage.id
         messages.append(streamingMessage)
-        let messageIndex = messages.count - 1
         
         do {
             // Build context-aware system prompt
@@ -534,20 +535,20 @@ final class ResponseViewModel {
                 let now = ContinuousClock.now
                 if now - lastUIFlushTime >= minUIFlushInterval {
                     // Throttle UI updates while streaming to reduce render pressure.
-                    if messageIndex < messages.count {
-                        messages[messageIndex].content = accumulatedContent
+                    if let idx = messages.firstIndex(where: { $0.id == messageId }) {
+                        messages[idx].content = accumulatedContent
                     }
                     lastUIFlushTime = now
                 }
             }
             
-            // 🔧 Normalize markdown content (strip outer code blocks + normalize LaTeX)
+            // Normalize markdown content (strip outer code blocks + normalize LaTeX)
             let normalizedResponse = accumulatedContent.normalizedForMarkdown()
             
             // Finalize the message
-            if messageIndex < messages.count {
-                messages[messageIndex].content = normalizedResponse
-                messages[messageIndex].isStreaming = false
+            if let idx = messages.firstIndex(where: { $0.id == messageId }) {
+                messages[idx].content = normalizedResponse
+                messages[idx].isStreaming = false
             }
             
             // Add to conversation history, keeping only the last 20 entries
@@ -557,11 +558,16 @@ final class ResponseViewModel {
                 conversationHistory.removeFirst(conversationHistory.count - 20)
             }
             
+            // Cap displayed messages to prevent unbounded UI memory growth
+            if messages.count > 100 {
+                messages.removeFirst(messages.count - 100)
+            }
+            
             isProcessing = false
         } catch {
             // Remove the streaming message on error
-            if messageIndex < messages.count {
-                messages.remove(at: messageIndex)
+            if let idx = messages.firstIndex(where: { $0.id == messageId }) {
+                messages.remove(at: idx)
             }
             isProcessing = false
             throw error

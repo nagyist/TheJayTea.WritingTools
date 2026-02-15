@@ -400,7 +400,7 @@ class LocalModelProvider {
     }
     
     func revealModelsFolder() {
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: Self.modelsRoot.path)
+        NSWorkspace.shared.activateFileViewerSelecting([Self.modelsRoot])
     }
 
     func cleanLegacyCacheForSelectedModel() {
@@ -623,54 +623,64 @@ class LocalModelProvider {
         
         running = true
         isProcessing = true
+        isCancelled = false
         output = ""
         
         // Fix #2: Synchronous state reset in defer (we're already on @MainActor)
         defer {
             running = false
             isProcessing = false
+            generationTask = nil
         }
         
         // Load the model (uses cache if already loaded)
         let modelContainer = try await load()
         
-        // Prepare input based on model type and available inputs
-        do {
-            if isUsingVisionModel && !images.isEmpty {
-                // VLM with images
-                return try await processWithVLM(
-                    modelContainer: modelContainer,
-                    systemPrompt: systemPrompt,
-                    userPrompt: userPrompt,
-                    images: images,
-                    streaming: streaming
-                )
-            } else {
-                // Regular LLM or VLM without images
-                // If using LLM with images, we'll use OCR and include text in prompt
-                
-                var combinedPrompt = userPrompt
-                if !images.isEmpty && !isUsingVisionModel {
-                    let ocrText = await OCRManager.shared.extractText(from: images)
-                    if !ocrText.isEmpty {
-                        combinedPrompt += "\n\n[Extracted Text from Image(s)]:\n\(ocrText)"
+        // Wrap generation in a Task so cancel() can cancel it cooperatively
+        var generationResult = ""
+        let task = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            do {
+                if isUsingVisionModel && !images.isEmpty {
+                    generationResult = try await processWithVLM(
+                        modelContainer: modelContainer,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        images: images,
+                        streaming: streaming
+                    )
+                } else {
+                    var combinedPrompt = userPrompt
+                    if !images.isEmpty && !isUsingVisionModel {
+                        let ocrText = await OCRManager.shared.extractText(from: images)
+                        if !ocrText.isEmpty {
+                            combinedPrompt += "\n\n[Extracted Text from Image(s)]:\n\(ocrText)"
+                        }
                     }
+                    
+                    generationResult = try await processWithLLM(
+                        modelContainer: modelContainer,
+                        systemPrompt: systemPrompt,
+                        userPrompt: combinedPrompt,
+                        streaming: streaming
+                    )
                 }
-                
-                return try await processWithLLM(
-                    modelContainer: modelContainer,
-                    systemPrompt: systemPrompt,
-                    userPrompt: combinedPrompt,
-                    streaming: streaming
-                )
+            } catch {
+                logger.error("Error during text generation: \(error.localizedDescription)")
+                lastError = "Generation failed: \(error.localizedDescription)"
+                stat = "Error"
             }
-        } catch {
-            // Handle generation errors
-            logger.error("Error during text generation: \(error.localizedDescription)")
-            lastError = "Generation failed: \(error.localizedDescription)"
-            stat = "Error"
-            throw error
         }
+        generationTask = task
+        await task.value
+        
+        if isCancelled || Task.isCancelled {
+            throw CancellationError()
+        }
+        if generationResult.isEmpty && lastError != nil {
+            throw NSError(domain: "LocalLLM", code: -1, userInfo: [NSLocalizedDescriptionKey: lastError ?? "Generation failed"])
+        }
+        return generationResult
     }
     
     // Fix #1/#16: Real streaming implementation that calls onChunk per token batch
@@ -693,19 +703,24 @@ class LocalModelProvider {
         
         running = true
         isProcessing = true
+        isCancelled = false
         output = ""
         
         defer {
             running = false
             isProcessing = false
+            generationTask = nil
         }
         
         let modelContainer = try await load()
         
         // Build UserInput based on model type
         let userInput: UserInput
+        var vlmTempURLs: [URL] = []
         if isUsingVisionModel && !images.isEmpty {
-            userInput = try buildVLMInput(systemPrompt: systemPrompt, userPrompt: userPrompt, images: images)
+            let result = try buildVLMInput(systemPrompt: systemPrompt, userPrompt: userPrompt, images: images)
+            userInput = result.input
+            vlmTempURLs = result.tempURLs
         } else {
             var combinedPrompt = userPrompt
             if !images.isEmpty && !isUsingVisionModel {
@@ -717,12 +732,38 @@ class LocalModelProvider {
             userInput = buildLLMInput(systemPrompt: systemPrompt, userPrompt: combinedPrompt)
         }
         
-        // Generate with streaming, calling onChunk for each token batch
-        try await generateResponseStreaming(
-            userInput: userInput,
-            modelContainer: modelContainer,
-            onChunk: onChunk
-        )
+        // Clean up VLM temp files after generation completes or fails
+        defer {
+            for url in vlmTempURLs {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        
+        // Wrap generation in a Task so cancel() can cancel it cooperatively
+        let task = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            do {
+                try await generateResponseStreaming(
+                    userInput: userInput,
+                    modelContainer: modelContainer,
+                    onChunk: onChunk
+                )
+            } catch {
+                if !(error is CancellationError) {
+                    logger.error("Streaming generation error: \(error.localizedDescription)")
+                    lastError = "Generation failed: \(error.localizedDescription)"
+                }
+            }
+        }
+        generationTask = task
+        await task.value
+        
+        if isCancelled || Task.isCancelled {
+            throw CancellationError()
+        }
+        if let error = lastError, !error.isEmpty && !error.starts(with: "Generation failed") == false {
+            throw NSError(domain: "LocalLLM", code: -1, userInfo: [NSLocalizedDescriptionKey: error])
+        }
     }
 
     /// Stores generation result to pass out of perform block
@@ -757,6 +798,7 @@ class LocalModelProvider {
             for try await item in stream {
                 // Fix #4: Check for task cancellation cooperatively
                 try Task.checkCancellation()
+                if isCancelled { throw CancellationError() }
 
                 switch item {
                 case .chunk(let text):
@@ -787,6 +829,7 @@ class LocalModelProvider {
             // Non-streaming: collect everything then update once
             for try await item in stream {
                 try Task.checkCancellation()
+                if isCancelled { throw CancellationError() }
 
                 switch item {
                 case .chunk(let text):
@@ -835,6 +878,7 @@ class LocalModelProvider {
 
         for try await item in stream {
             try Task.checkCancellation()
+            if isCancelled { throw CancellationError() }
 
             switch item {
             case .chunk(let text):
@@ -904,7 +948,7 @@ class LocalModelProvider {
     }
     
     // Fix #12: Collect temp URLs in a separate array for cleanup even on partial failure
-    private func buildVLMInput(systemPrompt: String?, userPrompt: String, images: [Data]) throws -> UserInput {
+    private func buildVLMInput(systemPrompt: String?, userPrompt: String, images: [Data]) throws -> (input: UserInput, tempURLs: [URL]) {
         var tempURLs: [URL] = []
 
         // Ensure cleanup of any written temp files on error
@@ -973,10 +1017,11 @@ class LocalModelProvider {
                 images: imageAttachments
             ))
 
-            return UserInput(
+            let userInput = UserInput(
                 chat: messages,
                 additionalContext: ["enable_thinking": self.enableThinking]
             )
+            return (input: userInput, tempURLs: tempURLs)
         } catch {
             // Clean up all temp files on any error
             for url in tempURLs {
@@ -993,11 +1038,16 @@ class LocalModelProvider {
         images: [Data],
         streaming: Bool
     ) async throws -> String {
-        let userInput = try buildVLMInput(systemPrompt: systemPrompt, userPrompt: userPrompt, images: images)
+        let (userInput, tempURLs) = try buildVLMInput(systemPrompt: systemPrompt, userPrompt: userPrompt, images: images)
 
-        // Note: temp file cleanup for VLM images happens after generation completes.
-        // The URLs are captured in the UserInput and must remain valid during generation.
-        // MLX processes them during prepare(), so they can be cleaned after generateResponse returns.
+        // Temp files must remain valid during generation (MLX reads them in prepare()).
+        // Clean up after generation completes or fails.
+        defer {
+            for url in tempURLs {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        
         return try await generateResponse(
             userInput: userInput,
             modelContainer: modelContainer,
@@ -1009,6 +1059,7 @@ class LocalModelProvider {
     func cancel() {
         if running {
             logger.debug("Cancelling in-flight generation...")
+            isCancelled = true
             generationTask?.cancel()
             generationTask = nil
         }

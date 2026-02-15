@@ -16,8 +16,6 @@ class WindowManager: NSObject, NSWindowDelegate {
     private weak var popupWindow: PopupWindow?
 
     private var responseWindows = NSHashTable<ResponseWindow>.weakObjects()
-    
-    private var cleanupTimer: Timer?
 
     // MARK: - Response Windows
 
@@ -55,14 +53,15 @@ class WindowManager: NSObject, NSWindowDelegate {
         window.delegate = self
     }
 
-    func dismissPopup() {
+    func dismissPopup(clearImages: Bool = true) {
         if let window = self.popupWindow {
             window.close()
             self.popupWindow = nil
         }
 
-        // Preserve previous behavior: clear selected images on popup close.
-        AppState.shared.selectedImages = []
+        if clearImages {
+            AppState.shared.selectedImages = []
+        }
     }
 
     // MARK: - Onboarding & Settings
@@ -240,9 +239,7 @@ class WindowManager: NSObject, NSWindowDelegate {
         popupWindow = nil
     }
 
-    deinit {
-        cleanupTimer?.invalidate()
-    }
+    deinit {}
 }
 
 extension WindowManager {

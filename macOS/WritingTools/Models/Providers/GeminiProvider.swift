@@ -34,17 +34,10 @@ enum GeminiModel: String, CaseIterable {
 final class GeminiProvider: AIProvider {
     var isProcessing = false
     private var config: GeminiConfig
-    private var aiProxyService: GeminiService?
     private var currentTask: Task<String, Error>?
     
     init(config: GeminiConfig) {
         self.config = config
-        setupAIProxyService()
-    }
-    
-    private func setupAIProxyService() {
-        guard !config.apiKey.isEmpty else { return }
-        aiProxyService = AIProxy.geminiDirectService(unprotectedAPIKey: config.apiKey)
     }
     
     func processText(systemPrompt: String? = "You are a helpful writing assistant.", userPrompt: String, images: [Data] = [], streaming: Bool = false) async throws -> String {
@@ -77,11 +70,11 @@ final class GeminiProvider: AIProvider {
             let requestBody = GeminiGenerateContentRequestBody(
                 contents: [.init(parts: parts)],
                 safetySettings: [
-                    .init(category: .dangerousContent, threshold: .none),
-                    .init(category: .harassment, threshold: .none),
-                    .init(category: .hateSpeech, threshold: .none),
-                    .init(category: .sexuallyExplicit, threshold: .none),
-                    .init(category: .civicIntegrity, threshold: .none)
+                    .init(category: .dangerousContent, threshold: .high),
+                    .init(category: .harassment, threshold: .high),
+                    .init(category: .hateSpeech, threshold: .high),
+                    .init(category: .sexuallyExplicit, threshold: .high),
+                    .init(category: .civicIntegrity, threshold: .high)
                 ]
             )
 
@@ -120,7 +113,10 @@ final class GeminiProvider: AIProvider {
         onChunk: @escaping @MainActor (String) -> Void
     ) async throws {
         isProcessing = true
-        defer { isProcessing = false }
+        defer {
+            isProcessing = false
+            currentTask = nil
+        }
 
         guard !config.apiKey.isEmpty else {
             throw NSError(domain: "GeminiAPI", code: -1,
@@ -138,36 +134,41 @@ final class GeminiProvider: AIProvider {
         let requestBody = GeminiGenerateContentRequestBody(
             contents: [.init(parts: parts)],
             safetySettings: [
-                .init(category: .dangerousContent, threshold: .none),
-                .init(category: .harassment, threshold: .none),
-                .init(category: .hateSpeech, threshold: .none),
-                .init(category: .sexuallyExplicit, threshold: .none),
-                .init(category: .civicIntegrity, threshold: .none)
+                .init(category: .dangerousContent, threshold: .high),
+                .init(category: .harassment, threshold: .high),
+                .init(category: .hateSpeech, threshold: .high),
+                .init(category: .sexuallyExplicit, threshold: .high),
+                .init(category: .civicIntegrity, threshold: .high)
             ]
         )
 
-        do {
-            let stream = try await geminiService.generateStreamingContentRequest(
-                body: requestBody,
-                model: config.modelName,
-                secondsToWait: 60
-            )
-            for try await chunk in stream {
-                if Task.isCancelled { break }
-                for part in chunk.candidates?.first?.content?.parts ?? [] {
-                    if case .text(let text) = part {
-                        onChunk(text)
+        let task = Task<String, Error> {
+            do {
+                let stream = try await geminiService.generateStreamingContentRequest(
+                    body: requestBody,
+                    model: config.modelName,
+                    secondsToWait: 60
+                )
+                for try await chunk in stream {
+                    if Task.isCancelled { break }
+                    for part in chunk.candidates?.first?.content?.parts ?? [] {
+                        if case .text(let text) = part {
+                            onChunk(text)
+                        }
                     }
                 }
+            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+                logger.error("Gemini streaming error (\(statusCode)): \(responseBody)")
+                throw NSError(domain: "GeminiAPI", code: statusCode,
+                              userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+            } catch {
+                logger.error("Gemini streaming failed: \(error.localizedDescription)")
+                throw error
             }
-        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-            logger.error("Gemini streaming error (\(statusCode)): \(responseBody)")
-            throw NSError(domain: "GeminiAPI", code: statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-        } catch {
-            logger.error("Gemini streaming failed: \(error.localizedDescription)")
-            throw error
+            return ""
         }
+        currentTask = task
+        _ = try await task.value
     }
 
     func cancel() {

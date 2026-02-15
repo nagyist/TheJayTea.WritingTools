@@ -249,7 +249,8 @@ struct PopupView: View {
 
         // Dismiss the popup without reactivating the previous app,
         // so the response window stays in front.
-        WindowManager.shared.dismissPopup()
+        // Don't clear images — the response window already captured them.
+        WindowManager.shared.dismissPopup(clearImages: false)
         WindowManager.shared.addResponseWindow(window)
 
         processingCommandId = nil
@@ -328,7 +329,8 @@ struct PopupView: View {
 
       // Dismiss the popup without reactivating the previous app,
       // so the response window stays in front.
-      WindowManager.shared.dismissPopup()
+      // Don't clear images — the response window already captured them.
+      WindowManager.shared.dismissPopup(clearImages: false)
       WindowManager.shared.addResponseWindow(window)
 
       customText = ""

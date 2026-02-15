@@ -76,19 +76,12 @@ class ResponseWindow: NSWindow {
   }
 
   private func configureFrameRestoration() {
-    // Try to restore the last-used window size/position.
-    // Use a unique autosave name per window instance so multiple windows
-    // don't conflict. Fall back to the shared saved frame for initial sizing.
-    let uniqueName = "\(Self.sharedAutosaveName)-\(UUID().uuidString)"
-    if self.setFrameAutosaveName(uniqueName) {
-      // New unique name accepted — restore from the shared frame data
-      self.setFrameUsingName(Self.sharedAutosaveName)
-    }
-    // Save the current frame under the shared name so the next window inherits it
-    self.saveFrame(usingName: Self.sharedAutosaveName)
-
-    // Only center if there was no saved frame to restore
-    if UserDefaults.standard.string(forKey: "NSWindow Frame \(Self.sharedAutosaveName)") == nil {
+    // Restore the last-used window size/position from the shared frame name.
+    // We intentionally do NOT use setFrameAutosaveName here because each
+    // response window is short-lived and creating unique autosave names
+    // would leak UserDefaults entries. Instead, we manually restore/save
+    // using a single shared key.
+    if !self.setFrameUsingName(Self.sharedAutosaveName) {
       self.center()
     }
   }

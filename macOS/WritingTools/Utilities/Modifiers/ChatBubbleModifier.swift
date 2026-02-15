@@ -13,7 +13,6 @@ struct ChatBubbleModifier: ViewModifier {
                     .fill(isFromUser ? Color.blue.opacity(0.15) :  Color(.controlBackgroundColor))
                     .opacity(isEmpty ? 0 : 1)
             )
-            .clipShape(bubbleShape)
     }
 }
 

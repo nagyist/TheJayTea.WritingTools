@@ -33,7 +33,7 @@ final class CustomProvider: AIProvider {
         let userPrompt = userPrompt
 
         let task = Task(priority: .userInitiated) {
-            try await Self.performRequest(config: config, systemPrompt: systemPrompt, userPrompt: userPrompt)
+            try await Self.performRequest(config: config, systemPrompt: systemPrompt, userPrompt: userPrompt, images: images)
         }
         currentTask = task
         return try await task.value
@@ -48,6 +48,7 @@ final class CustomProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
+            currentTask = nil
         }
 
         let config = self.config
@@ -80,7 +81,23 @@ final class CustomProvider: AIProvider {
         if let systemPrompt = systemPrompt, !systemPrompt.isEmpty {
             messages.append(["role": "system", "content": systemPrompt])
         }
-        messages.append(["role": "user", "content": userPrompt])
+
+        // Include images in streaming requests (OpenAI vision format)
+        if !images.isEmpty {
+            var contentParts: [[String: Any]] = [
+                ["type": "text", "text": userPrompt]
+            ]
+            for imageData in images {
+                let base64 = imageData.base64EncodedString()
+                contentParts.append([
+                    "type": "image_url",
+                    "image_url": ["url": "data:image/png;base64,\(base64)"]
+                ])
+            }
+            messages.append(["role": "user", "content": contentParts])
+        } else {
+            messages.append(["role": "user", "content": userPrompt])
+        }
 
         let requestBody: [String: Any] = [
             "model": config.model,
@@ -98,33 +115,38 @@ final class CustomProvider: AIProvider {
         requestBuilder.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         let request = requestBuilder
 
-        let (stream, response) = try await URLSession.shared.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw CustomProviderError.networkError("Invalid response from server")
-        }
-        guard (200...299).contains(http.statusCode) else {
-            var data = Data()
-            for try await byte in stream { data.append(byte) }
-            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let error = errorJson["error"] as? [String: Any],
-               let message = error["message"] as? String {
-                throw CustomProviderError.apiError("API Error (\(http.statusCode)): \(message)")
+        let task = Task<String, Error> {
+            let (stream, response) = try await URLSession.shared.bytes(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw CustomProviderError.networkError("Invalid response from server")
             }
-            throw CustomProviderError.apiError("API Error: HTTP \(http.statusCode)")
-        }
+            guard (200...299).contains(http.statusCode) else {
+                var data = Data()
+                for try await byte in stream { data.append(byte) }
+                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let error = errorJson["error"] as? [String: Any],
+                   let message = error["message"] as? String {
+                    throw CustomProviderError.apiError("API Error (\(http.statusCode)): \(message)")
+                }
+                throw CustomProviderError.apiError("API Error: HTTP \(http.statusCode)")
+            }
 
-        for try await line in stream.lines {
-            if Task.isCancelled { break }
-            guard line.hasPrefix("data: ") else { continue }
-            let jsonStr = String(line.dropFirst(6))
-            if jsonStr.trimmingCharacters(in: .whitespaces) == "[DONE]" { break }
-            guard let data = jsonStr.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let delta = choices.first?["delta"] as? [String: Any],
-                  let content = delta["content"] as? String else { continue }
-            onChunk(content)
+            for try await line in stream.lines {
+                if Task.isCancelled { break }
+                guard line.hasPrefix("data: ") else { continue }
+                let jsonStr = String(line.dropFirst(6))
+                if jsonStr.trimmingCharacters(in: .whitespaces) == "[DONE]" { break }
+                guard let data = jsonStr.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let choices = json["choices"] as? [[String: Any]],
+                      let delta = choices.first?["delta"] as? [String: Any],
+                      let content = delta["content"] as? String else { continue }
+                onChunk(content)
+            }
+            return ""
         }
+        currentTask = task
+        _ = try await task.value
     }
 
     func cancel() {
@@ -136,7 +158,8 @@ final class CustomProvider: AIProvider {
     nonisolated private static func performRequest(
         config: CustomProviderConfig,
         systemPrompt: String?,
-        userPrompt: String
+        userPrompt: String,
+        images: [Data] = []
     ) async throws -> String {
         logger.debug("CustomProvider: Starting request with baseURL=\(config.baseURL), model=\(config.model)")
 
@@ -190,10 +213,28 @@ final class CustomProvider: AIProvider {
             ])
         }
 
-        messages.append([
-            "role": "user",
-            "content": userPrompt
-        ])
+        // Build user message content - include images as base64 if provided (OpenAI vision format)
+        if !images.isEmpty {
+            var contentParts: [[String: Any]] = [
+                ["type": "text", "text": userPrompt]
+            ]
+            for imageData in images {
+                let base64 = imageData.base64EncodedString()
+                contentParts.append([
+                    "type": "image_url",
+                    "image_url": ["url": "data:image/png;base64,\(base64)"]
+                ])
+            }
+            messages.append([
+                "role": "user",
+                "content": contentParts
+            ])
+        } else {
+            messages.append([
+                "role": "user",
+                "content": userPrompt
+            ])
+        }
 
         // Prepare request body
         let requestBody: [String: Any] = [

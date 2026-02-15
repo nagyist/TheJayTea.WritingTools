@@ -121,13 +121,13 @@ nonisolated func withRetry<T: Sendable>(
         } catch {
             lastError = error
 
-            // Don't retry if it's not a retryable error or we've exhausted retries
-            if !RetryableError.isRetryable(error) || attempt == config.maxRetries {
+            // Propagate cancellation immediately — never retry a cancelled task
+            if error is CancellationError || Task.isCancelled {
                 throw error
             }
 
-            // Check for cancellation before waiting
-            if Task.isCancelled {
+            // Don't retry if it's not a retryable error or we've exhausted retries
+            if !RetryableError.isRetryable(error) || attempt == config.maxRetries {
                 throw error
             }
 

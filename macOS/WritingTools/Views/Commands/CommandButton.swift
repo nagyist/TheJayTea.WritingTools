@@ -102,7 +102,7 @@ struct LoadingButtonStyle: ButtonStyle {
                 Group {
                     if isLoading {
                         ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle())
+                            .progressViewStyle(.circular)
                     }
                 }
             )

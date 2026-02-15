@@ -1,5 +1,13 @@
 import SwiftUI
 
+private enum AboutURLs {
+    static let emailJesai = URL(string: "mailto:jesaitarun@gmail.com")!
+    static let blissAI = URL(string: "https://play.google.com/store/apps/details?id=com.jesai.blissai")!
+    static let emailArya = URL(string: "mailto:developer@aryamirsepasi.com")!
+    static let proseKey = URL(string: "https://apps.apple.com/us/app/prosekey-ai/id6741180175")!
+    static let releases = URL(string: "https://github.com/theJayTea/WritingTools/releases")!
+}
+
 struct AboutView: View {
     @Bindable private var settings = AppSettings.shared
     @State private var updateChecker = UpdateChecker.shared
@@ -42,8 +50,8 @@ struct AboutView: View {
                         Text("Created with care by Jesai, a high school student.")
                             .bold()
                         HStack(spacing: 12) {
-                            Link("Email Jesai", destination: URL(string: "mailto:jesaitarun@gmail.com")!)
-                            Link("Bliss AI on Google Play", destination: URL(string: "https://play.google.com/store/apps/details?id=com.jesai.blissai")!)
+                            Link("Email Jesai", destination: AboutURLs.emailJesai)
+                            Link("Bliss AI on Google Play", destination: AboutURLs.blissAI)
                         }
                     }
 
@@ -53,8 +61,8 @@ struct AboutView: View {
                         Text("macOS version by Arya Mirsepasi")
                             .bold()
                         HStack(spacing: 12) {
-                            Link("Email Arya", destination: URL(string: "mailto:developer@aryamirsepasi.com")!)
-                            Link("ProseKey AI (iOS port)", destination: URL(string: "https://apps.apple.com/us/app/prosekey-ai/id6741180175")!)
+                            Link("Email Arya", destination: AboutURLs.emailArya)
+                            Link("ProseKey AI (iOS port)", destination: AboutURLs.proseKey)
                         }
                     }
                 }
@@ -105,7 +113,7 @@ struct AboutView: View {
                         }
                         .buttonStyle(.borderedProminent)
 
-                        Link("View Releases", destination: URL(string: "https://github.com/theJayTea/WritingTools/releases")!)
+                        Link("View Releases", destination: AboutURLs.releases)
                             .buttonStyle(.link)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)

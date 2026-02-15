@@ -482,8 +482,9 @@ final class AppState {
 
     // Process a command (unified method for all command types)
     func processCommand(_ command: CommandModel) {
+        // Set isProcessing immediately before creating the Task to prevent
+        // race conditions where multiple commands could pass the guard
         guard !isProcessing else { return }
-
         isProcessing = true
 
         Task {
@@ -580,9 +581,10 @@ final class AppState {
                     // Perform the paste
                     self.simulatePaste()
 
-                    // Wait a moment for the paste to complete, then restore the clipboard
+                    // Wait for the paste to complete before restoring the clipboard.
+                    // 250ms accommodates slower apps (e.g. Electron, heavy IDEs).
                     do {
-                        try await Task.sleep(for: .milliseconds(100))
+                        try await Task.sleep(for: .milliseconds(250))
                     } catch {
                         logger.debug("Paste delay interrupted: \(error.localizedDescription)")
                     }

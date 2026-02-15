@@ -10,7 +10,7 @@ struct OpenAIConfig: Codable, Sendable {
     var model: String
     
     static let defaultBaseURL = "https://api.openai.com"
-    static let defaultModel = "gpt-5"
+    static let defaultModel = "gpt-5.2"
 }
 
 enum OpenAIModel: String, CaseIterable {
@@ -32,24 +32,10 @@ enum OpenAIModel: String, CaseIterable {
 final class OpenAIProvider: AIProvider {
     var isProcessing = false
     private var config: OpenAIConfig
-    private var aiProxyService: OpenAIService?
     private var currentTask: Task<String, Error>?
     
     init(config: OpenAIConfig) {
         self.config = config
-        setupAIProxyService()
-    }
-    
-    private func setupAIProxyService() {
-        guard !config.apiKey.isEmpty else { return }
-        
-        // Use custom base URL if provided, otherwise use default
-        let baseURL = config.baseURL.isEmpty ? OpenAIConfig.defaultBaseURL : config.baseURL
-        
-        aiProxyService = AIProxy.openAIDirectService(
-            unprotectedAPIKey: config.apiKey,
-            baseURL: baseURL
-        )
     }
     
     func processText(systemPrompt: String? = "You are a helpful writing assistant.", userPrompt: String, images: [Data] = [], streaming: Bool = false) async throws -> String {
@@ -296,26 +282,31 @@ final class OpenAIProvider: AIProvider {
             messages.append(.user(content: .parts(parts)))
         }
         
-        do {
-            let stream = try await openAIService.streamingChatCompletionRequest(body: .init(
-                model: config.model,
-                messages: messages
-            ), secondsToWait: 60)
-            
-            for try await chunk in stream {
-                if Task.isCancelled { break }
-                if let content = chunk.choices.first?.delta.content {
-                    onChunk(content)
+        let task = Task<String, Error> {
+            do {
+                let stream = try await openAIService.streamingChatCompletionRequest(body: .init(
+                    model: config.model,
+                    messages: messages
+                ), secondsToWait: 60)
+                
+                for try await chunk in stream {
+                    if Task.isCancelled { break }
+                    if let content = chunk.choices.first?.delta.content {
+                        onChunk(content)
+                    }
                 }
+            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+                logger.error("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
+                throw NSError(domain: "OpenAIAPI",
+                              code: statusCode,
+                              userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+            } catch {
+                logger.error("Could not create OpenAI streaming chat completion: \(error.localizedDescription)")
+                throw error
             }
-        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-            logger.error("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
-            throw NSError(domain: "OpenAIAPI",
-                          code: statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-        } catch {
-            logger.error("Could not create OpenAI streaming chat completion: \(error.localizedDescription)")
-            throw error
+            return ""
         }
+        currentTask = task
+        _ = try await task.value
     }
 }

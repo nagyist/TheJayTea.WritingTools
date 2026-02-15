@@ -166,7 +166,7 @@ final class CloudCommandsSync {
     let localMTime =
       UserDefaults.standard.object(forKey: localMTimeKey) as? Date
 
-    guard localMTime == nil || remoteMTime > localMTime! else {
+    guard localMTime.map({ remoteMTime > $0 }) ?? true else {
       return
     }
 
@@ -176,11 +176,18 @@ final class CloudCommandsSync {
       let remoteCommands = try JSONDecoder().decode([CommandModel].self, from: data)
 
       isApplyingCloudChange = true
-      defer { isApplyingCloudChange = false }
 
       AppState.shared.commandManager.replaceAllCommands(with: remoteCommands)
       UserDefaults.standard.set(remoteMTime, forKey: localMTimeKey)
+
+      // Reset isApplyingCloudChange after a brief delay so that the
+      // CommandsChanged notification observer's Task (which hops to
+      // @MainActor on the next runloop turn) sees the flag as true
+      // and skips the redundant push.
+      try? await Task.sleep(for: .milliseconds(100))
+      isApplyingCloudChange = false
     } catch {
+      isApplyingCloudChange = false
       logger.error("CloudCommandsSync: decode error: \(error.localizedDescription)")
     }
   }

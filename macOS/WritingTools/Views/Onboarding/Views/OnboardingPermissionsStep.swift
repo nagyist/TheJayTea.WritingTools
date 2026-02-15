@@ -118,12 +118,12 @@ struct OnboardingPermissionsStep: View {
         Spacer()
 
         Button("Open Privacy & Security") {
-          NSWorkspace.shared.open(
-            URL(
-              string:
-                "x-apple.systempreferences:com.apple.preference.security"
-            )!
-          )
+          if let url = URL(
+            string:
+              "x-apple.systemsettings:com.apple.settings.PrivacySecurity.extension"
+          ) {
+            NSWorkspace.shared.open(url)
+          }
         }
         .buttonStyle(.link)
         .accessibilityLabel("Open Privacy and Security settings")
@@ -146,7 +146,7 @@ struct OnboardingPermissionsHelper {
       try? await Task.sleep(for: .milliseconds(200))
       if let url = URL(
         string:
-          "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+          "x-apple.systemsettings:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
       ) {
         NSWorkspace.shared.open(url)
       }
@@ -154,23 +154,15 @@ struct OnboardingPermissionsHelper {
   }
 
   static func checkScreenRecording() -> Bool {
-    if #available(macOS 10.15, *) {
-      return CGPreflightScreenCaptureAccess()
-    } else {
-      return true
-    }
+    CGPreflightScreenCaptureAccess()
   }
 
   static func requestScreenRecording(completion: @escaping (Bool) -> Void) {
-    if #available(macOS 10.15, *) {
-      Task.detached(priority: .userInitiated) {
-        let granted = CGRequestScreenCaptureAccess()
-        await MainActor.run {
-          completion(granted)
-        }
+    Task.detached(priority: .userInitiated) {
+      let granted = CGRequestScreenCaptureAccess()
+      await MainActor.run {
+        completion(granted)
       }
-    } else {
-      completion(true)
     }
   }
 }

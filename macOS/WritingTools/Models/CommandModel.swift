@@ -96,6 +96,20 @@ struct CommandModel: Codable, Identifiable, Equatable {
         }
     }
 
+    // MARK: – Stable UUIDs for built-in commands
+    // These must remain constant so that deletedDefaultIds tracking works across launches.
+
+    enum BuiltInID {
+        static let proofread   = UUID(uuidString: "00000000-0001-0000-0000-000000000001")!
+        static let rewrite     = UUID(uuidString: "00000000-0001-0000-0000-000000000002")!
+        static let friendly    = UUID(uuidString: "00000000-0001-0000-0000-000000000003")!
+        static let professional = UUID(uuidString: "00000000-0001-0000-0000-000000000004")!
+        static let concise     = UUID(uuidString: "00000000-0001-0000-0000-000000000005")!
+        static let summary     = UUID(uuidString: "00000000-0001-0000-0000-000000000006")!
+        static let keyPoints   = UUID(uuidString: "00000000-0001-0000-0000-000000000007")!
+        static let table       = UUID(uuidString: "00000000-0001-0000-0000-000000000008")!
+    }
+
     // MARK: – Convenience initialiser (unchanged)
 
     init(id: UUID = UUID(),
@@ -165,6 +179,7 @@ struct CommandModel: Codable, Identifiable, Equatable {
 
     static var proofread: CommandModel {
         CommandModel(
+            id: BuiltInID.proofread,
             name: String(localized: "Proofread", comment: "ID for proofreading"),
             prompt: """
             {
@@ -245,6 +260,7 @@ struct CommandModel: Codable, Identifiable, Equatable {
 
     static var rewrite: CommandModel {
         CommandModel(
+            id: BuiltInID.rewrite,
             name: String(localized: "Rewrite", comment: "ID for rewriting"),
             prompt: """
             {
@@ -330,6 +346,7 @@ struct CommandModel: Codable, Identifiable, Equatable {
 
     static var friendly: CommandModel {
         CommandModel(
+            id: BuiltInID.friendly,
             name: String(localized: "Friendly", comment: "ID for friendly tone"),
             prompt: """
             {
@@ -407,6 +424,7 @@ struct CommandModel: Codable, Identifiable, Equatable {
 
     static var professional: CommandModel {
         CommandModel(
+            id: BuiltInID.professional,
             name: String(localized: "Professional", comment: "ID for professional tone"),
             prompt: """
             {
@@ -484,6 +502,7 @@ struct CommandModel: Codable, Identifiable, Equatable {
 
     static var concise: CommandModel {
         CommandModel(
+            id: BuiltInID.concise,
             name: String(localized: "Concise", comment: "ID for concise tone"),
             prompt: """
             {
@@ -569,6 +588,7 @@ struct CommandModel: Codable, Identifiable, Equatable {
 
     static var summary: CommandModel {
         CommandModel(
+            id: BuiltInID.summary,
             name: String(localized: "Summary", comment: "ID for summarization"),
             prompt: """
             {
@@ -642,6 +662,7 @@ struct CommandModel: Codable, Identifiable, Equatable {
 
     static var keyPoints: CommandModel {
         CommandModel(
+            id: BuiltInID.keyPoints,
             name: String(localized: "Key Points", comment: "ID for key points extraction"),
             prompt: """
             {
@@ -718,6 +739,7 @@ struct CommandModel: Codable, Identifiable, Equatable {
 
     static var table: CommandModel {
         CommandModel(
+            id: BuiltInID.table,
             name: String(localized: "Table", comment: "ID for table conversion"),
             prompt: """
             {

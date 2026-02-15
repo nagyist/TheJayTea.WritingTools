@@ -63,8 +63,11 @@ class KeychainMigrationManager {
         // Log migration results
         logMigration(migratedKeys: migratedKeys, failedKeys: failedKeys)
         
-        // Mark migration as complete
-        markMigrationComplete()
+        // Only mark migration as complete if all keys succeeded.
+        // Failed keys remain in UserDefaults so the next launch retries them.
+        if failedKeys.isEmpty {
+            markMigrationComplete()
+        }
         
         logger.info("Keychain migration complete. Migrated: \(migratedKeys.count), Failed: \(failedKeys.count)")
     }
