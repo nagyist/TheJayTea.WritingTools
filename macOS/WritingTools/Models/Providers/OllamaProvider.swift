@@ -25,6 +25,18 @@ enum OllamaImageMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// Response chunk from the Ollama `/api/chat` endpoint.
+private struct ChatChunk: Decodable {
+    struct Message: Decodable {
+        let role: String?
+        let content: String?
+    }
+    let message: Message?
+    let done: Bool?
+    let error: String?
+}
+
+/// Legacy `/api/generate` chunk kept only for `decodeServerError`.
 private struct GenerateChunk: Decodable {
     let response: String?
     let done: Bool?
@@ -64,47 +76,49 @@ final class OllamaProvider: AIProvider {
         let imageMode = AppSettings.shared.ollamaImageMode
 
         let task = Task.detached(priority: .userInitiated) {
-            // 1) Build combined prompt: system message + user input
-            var combinedPrompt = ""
+            // 1) Build the messages array for the chat endpoint
+            var messages: [[String: Any]] = []
 
-            // Include system prompt if provided
+            // System message
             if let system = systemPrompt, !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                combinedPrompt = system + "\n\n"
+                messages.append(["role": "system", "content": system])
             }
 
-            // Add user's actual text
-            combinedPrompt += userPrompt
-
+            // User message
+            var userContent = userPrompt
             var imagesForOllama: [String] = []
 
             if !images.isEmpty {
                 switch imageMode {
                 case .ocr:
-                    let ocrText = await OCRManager.shared.extractText(from: images)
+                    let ocrText = try await OCRManager.shared.extractText(from: images)
                     if !ocrText.isEmpty {
-                        combinedPrompt += "\n\nExtracted Text: \(ocrText)"
+                        userContent += "\n\nExtracted Text: \(ocrText)"
                     }
                 case .ollama:
                     imagesForOllama = images.map { $0.base64EncodedString() }
                 }
             }
 
+            var userMessage: [String: Any] = ["role": "user", "content": userContent]
+            if !imagesForOllama.isEmpty {
+                userMessage["images"] = imagesForOllama
+            }
+            messages.append(userMessage)
+
             // 2) Construct URL
-            guard let url = Self.makeEndpointURL(config.baseURL, path: "/generate") else {
+            guard let url = Self.makeEndpointURL(config.baseURL, path: "/chat") else {
                 throw Self.makeClientError("Invalid base URL '\(config.baseURL)'. Expected like http://localhost:11434 or http://localhost:11434/api")
             }
 
-            // 3) Build request body - everything in one "prompt" field
+            // 3) Build request body using the chat messages format
             var body: [String: Any] = [
                 "model": config.model,
-                "prompt": combinedPrompt,
+                "messages": messages,
                 "stream": streaming
             ]
             if let keepAlive = config.keepAlive, !keepAlive.isEmpty {
                 body["keep_alive"] = keepAlive
-            }
-            if !imagesForOllama.isEmpty {
-                body["images"] = imagesForOllama
             }
 
             let jsonData = try JSONSerialization.data(withJSONObject: body)
@@ -139,80 +153,99 @@ final class OllamaProvider: AIProvider {
         onChunk: @escaping @MainActor (String) -> Void
     ) async throws {
         isProcessing = true
-        defer { isProcessing = false }
+        defer {
+            isProcessing = false
+            currentTask = nil
+        }
 
+        let config = self.config
         let imageMode = AppSettings.shared.ollamaImageMode
+        let systemPrompt = systemPrompt
+        let userPrompt = userPrompt
+        let images = images
 
-        var combinedPrompt = ""
-        if let system = systemPrompt, !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            combinedPrompt = system + "\n\n"
-        }
-        combinedPrompt += userPrompt
+        let task = Task.detached(priority: .userInitiated) {
+            var messages: [[String: Any]] = []
 
-        var imagesForOllama: [String] = []
-        if !images.isEmpty {
-            switch imageMode {
-            case .ocr:
-                let ocrText = await OCRManager.shared.extractText(from: images)
-                if !ocrText.isEmpty {
-                    combinedPrompt += "\n\nExtracted Text: \(ocrText)"
-                }
-            case .ollama:
-                imagesForOllama = images.map { $0.base64EncodedString() }
+            if let system = systemPrompt, !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                messages.append(["role": "system", "content": system])
             }
-        }
 
-        guard let url = Self.makeEndpointURL(config.baseURL, path: "/generate") else {
-            throw Self.makeClientError("Invalid base URL '\(config.baseURL)'.")
-        }
-
-        var body: [String: Any] = [
-            "model": config.model,
-            "prompt": combinedPrompt,
-            "stream": true
-        ]
-        if let keepAlive = config.keepAlive, !keepAlive.isEmpty {
-            body["keep_alive"] = keepAlive
-        }
-        if !imagesForOllama.isEmpty {
-            body["images"] = imagesForOllama
-        }
-
-        let jsonData = try JSONSerialization.data(withJSONObject: body)
-
-        var requestBuilder = URLRequest(url: url)
-        requestBuilder.httpMethod = "POST"
-        requestBuilder.httpBody = jsonData
-        requestBuilder.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        requestBuilder.setValue("application/json", forHTTPHeaderField: "Accept")
-        requestBuilder.timeoutInterval = 60
-        let request = requestBuilder
-
-        let (stream, response) = try await URLSession.shared.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw Self.makeClientError("Invalid response from server.")
-        }
-
-        if http.statusCode != 200 {
-            var data = Data()
-            for try await byte in stream { data.append(byte) }
-            let message = Self.decodeServerError(from: data)
-            throw Self.makeServerError(http.statusCode, message)
-        }
-
-        for try await line in stream.lines {
-            if Task.isCancelled { break }
-            guard let data = line.data(using: .utf8) else { continue }
-            if let chunk = try? JSONDecoder().decode(GenerateChunk.self, from: data) {
-                if let t = chunk.response {
-                    onChunk(t)
-                }
-                if chunk.done == true { break }
-                if let err = chunk.error, !err.isEmpty {
-                    throw Self.makeServerError(500, err)
+            var userContent = userPrompt
+            var imagesForOllama: [String] = []
+            if !images.isEmpty {
+                switch imageMode {
+                case .ocr:
+                    let ocrText = try await OCRManager.shared.extractText(from: images)
+                    if !ocrText.isEmpty {
+                        userContent += "\n\nExtracted Text: \(ocrText)"
+                    }
+                case .ollama:
+                    imagesForOllama = images.map { $0.base64EncodedString() }
                 }
             }
+
+            var userMessage: [String: Any] = ["role": "user", "content": userContent]
+            if !imagesForOllama.isEmpty {
+                userMessage["images"] = imagesForOllama
+            }
+            messages.append(userMessage)
+
+            guard let url = Self.makeEndpointURL(config.baseURL, path: "/chat") else {
+                throw Self.makeClientError("Invalid base URL '\(config.baseURL)'.")
+            }
+
+            var body: [String: Any] = [
+                "model": config.model,
+                "messages": messages,
+                "stream": true
+            ]
+            if let keepAlive = config.keepAlive, !keepAlive.isEmpty {
+                body["keep_alive"] = keepAlive
+            }
+
+            let jsonData = try JSONSerialization.data(withJSONObject: body)
+
+            var requestBuilder = URLRequest(url: url)
+            requestBuilder.httpMethod = "POST"
+            requestBuilder.httpBody = jsonData
+            requestBuilder.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            requestBuilder.setValue("application/json", forHTTPHeaderField: "Accept")
+            requestBuilder.timeoutInterval = 60
+            let request = requestBuilder
+
+            let (stream, response) = try await URLSession.shared.bytes(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw Self.makeClientError("Invalid response from server.")
+            }
+
+            if http.statusCode != 200 {
+                var data = Data()
+                for try await byte in stream { data.append(byte) }
+                let message = Self.decodeServerError(from: data)
+                throw Self.makeServerError(http.statusCode, message)
+            }
+
+            var aggregate = ""
+            for try await line in stream.lines {
+                if Task.isCancelled { break }
+                guard let data = line.data(using: .utf8) else { continue }
+                if let chunk = try? JSONDecoder().decode(ChatChunk.self, from: data) {
+                    if let t = chunk.message?.content {
+                        aggregate += t
+                        await onChunk(t)
+                    }
+                    if chunk.done == true { break }
+                    if let err = chunk.error, !err.isEmpty {
+                        throw Self.makeServerError(500, err)
+                    }
+                }
+            }
+
+            return aggregate
         }
+        currentTask = task
+        _ = try await task.value
     }
 
     func cancel() {
@@ -234,11 +267,11 @@ final class OllamaProvider: AIProvider {
             throw makeServerError(http.statusCode, message)
         }
 
-        let obj = try JSONDecoder().decode(GenerateChunk.self, from: data)
+        let obj = try JSONDecoder().decode(ChatChunk.self, from: data)
         if let err = obj.error, !err.isEmpty {
             throw makeServerError(http.statusCode, err)
         }
-        guard let text = obj.response else {
+        guard let text = obj.message?.content else {
             throw makeClientError("Failed to parse response.")
         }
         return text
@@ -265,8 +298,8 @@ final class OllamaProvider: AIProvider {
                 break
             }
             guard let data = line.data(using: .utf8) else { continue }
-            if let chunk = try? JSONDecoder().decode(GenerateChunk.self, from: data) {
-                if let t = chunk.response { aggregate += t }
+            if let chunk = try? JSONDecoder().decode(ChatChunk.self, from: data) {
+                if let t = chunk.message?.content { aggregate += t }
                 if chunk.done == true { break }
                 if let err = chunk.error, !err.isEmpty {
                     throw makeServerError(500, err)
@@ -279,33 +312,34 @@ final class OllamaProvider: AIProvider {
     // MARK: - Utilities
 
     nonisolated private static func makeEndpointURL(_ baseURL: String, path: String) -> URL? {
-        // Normalize the base URL properly to avoid double-slashes
-        var trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed) else { return nil }
 
-        // Remove trailing slashes
-        while trimmed.hasSuffix("/") {
-            trimmed = String(trimmed.dropLast())
+        // Normalize the path: strip trailing slashes, strip "/api" suffix if present,
+        // then append "/api" + the requested path consistently.
+        var basePath = components.path
+        while basePath.hasSuffix("/") {
+            basePath = String(basePath.dropLast())
+        }
+        // Only strip "/api" when it's a complete path segment (preceded by "/" or is the entire path)
+        if basePath.lowercased().hasSuffix("/api") {
+            basePath = String(basePath.dropLast(4))
+        } else if basePath.lowercased() == "api" {
+            basePath = ""
+        }
+        while basePath.hasSuffix("/") {
+            basePath = String(basePath.dropLast())
         }
 
-        // Remove "/api" suffix if present (we'll add it back consistently)
-        if trimmed.lowercased().hasSuffix("/api") {
-            trimmed = String(trimmed.dropLast(4))
-        } else if trimmed.lowercased().hasSuffix("api") && !trimmed.contains("://api") {
-            // Handle case where it's just "api" at end without slash (but not part of protocol)
-            trimmed = String(trimmed.dropLast(3))
-        }
-
-        // Remove any trailing slashes that might have been exposed
-        while trimmed.hasSuffix("/") {
-            trimmed = String(trimmed.dropLast())
-        }
-
-        // Build the final URL
-        let full = trimmed + "/api" + path
-        return URL(string: full)
+        components.path = basePath + "/api" + path
+        return components.url
     }
 
     nonisolated private static func decodeServerError(from data: Data) -> String {
+        if let obj = try? JSONDecoder().decode(ChatChunk.self, from: data),
+           let err = obj.error, !err.isEmpty {
+            return err
+        }
         if let obj = try? JSONDecoder().decode(GenerateChunk.self, from: data),
            let err = obj.error, !err.isEmpty {
             return err

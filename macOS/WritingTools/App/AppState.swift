@@ -1,6 +1,7 @@
 import SwiftUI
 import Observation
 import UniformTypeIdentifiers
+import CryptoKit
 
 private let logger = AppLogger.logger("AppState")
 
@@ -40,6 +41,8 @@ final class AppState {
     @ObservationIgnored
     private var cacheInsertionOrder: [String] = []
     private let maxCacheSize = 10
+    @ObservationIgnored
+    private var apiKeyChangeObserver: NSObjectProtocol?
 
     var customInstruction: String = ""
     var selectedText: String = ""
@@ -133,10 +136,13 @@ final class AppState {
 
     /// Create or retrieve a cached provider instance with a specific model override
     private func createProviderWithModel(providerName: String, model: String) -> any AIProvider {
-        let cacheKey = "\(providerName):\(model)"
+        let apiKey = Self.currentAPIKey(for: providerName)
+        let keyHash = apiKey.isEmpty ? "" : String(SHA256.hash(data: Data(apiKey.utf8)).description.prefix(8))
+        let cacheKey = "\(providerName):\(model):\(keyHash)"
 
-        // Return cached provider if available
+        // Return cached provider if available and mark it as recently used.
         if let cached = modelOverrideProviderCache[cacheKey] {
+            touchProviderCacheKey(cacheKey)
             return cached
         }
 
@@ -196,22 +202,45 @@ final class AppState {
             return activeProvider
         }
 
-        // Evict oldest entry if cache is full (FIFO by insertion order)
-        if modelOverrideProviderCache.count >= maxCacheSize {
+        // Evict least recently used entry if cache is full.
+        if modelOverrideProviderCache.count >= maxCacheSize,
+           !cacheInsertionOrder.isEmpty {
             let oldest = cacheInsertionOrder.removeFirst()
-            modelOverrideProviderCache.removeValue(forKey: oldest)
+            if let evicted = modelOverrideProviderCache.removeValue(forKey: oldest) {
+                evicted.cancel()
+            }
         }
 
         // Cache the new provider
         modelOverrideProviderCache[cacheKey] = provider
-        cacheInsertionOrder.append(cacheKey)
+        touchProviderCacheKey(cacheKey)
         return provider
+    }
+
+    private func touchProviderCacheKey(_ key: String) {
+        if let existingIndex = cacheInsertionOrder.firstIndex(of: key) {
+            cacheInsertionOrder.remove(at: existingIndex)
+        }
+        cacheInsertionOrder.append(key)
     }
 
     /// Clear the model override provider cache (call when settings change)
     func clearProviderCache() {
         modelOverrideProviderCache.removeAll()
         cacheInsertionOrder.removeAll()
+    }
+
+    /// Returns the current API key for the given provider name (used for cache key hashing).
+    private static func currentAPIKey(for providerName: String) -> String {
+        let s = AppSettings.shared
+        switch providerName {
+        case "openai":    return s.openAIApiKey
+        case "gemini":    return s.geminiApiKey
+        case "anthropic": return s.anthropicApiKey
+        case "mistral":   return s.mistralApiKey
+        case "openrouter": return s.openRouterApiKey
+        default:          return ""
+        }
     }
 
     private init() {
@@ -287,6 +316,17 @@ final class AppState {
             commandManager: commandManager,
             customCommandsManager: customCommandsManager
         )
+
+        // Invalidate cached providers when API keys change so stale keys aren't reused
+        apiKeyChangeObserver = NotificationCenter.default.addObserver(
+            forName: .apiKeyDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.clearProviderCache()
+            }
+        }
     }
 
     // For Gemini changes
@@ -454,7 +494,7 @@ final class AppState {
             )
         }
 
-        let ocrText = await OCRManager.shared
+        let ocrText = try await OCRManager.shared
             .extractText(from: selectedImages)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -480,64 +520,6 @@ final class AppState {
         )
     }
 
-    // Process a command (unified method for all command types)
-    func processCommand(_ command: CommandModel) {
-        // Set isProcessing immediately before creating the Task to prevent
-        // race conditions where multiple commands could pass the guard
-        guard !isProcessing else { return }
-        isProcessing = true
-
-        Task {
-            defer { isProcessing = false }
-
-            do {
-                let prompt = command.prompt
-                let input = try await resolveCommandInput()
-
-                // Get the appropriate provider for this command (respects per-command overrides)
-                let provider = getProvider(for: command)
-
-                var result = try await provider.processText(
-                    systemPrompt: prompt,
-                    userPrompt: input.userPrompt,
-                    images: input.images,
-                    streaming: false
-                )
-
-                // Preserve trailing newlines from the original selection
-                // This is important for triple-click selections which include the trailing newline
-                if input.source == .selectedText, selectedText.hasSuffix("\n"), !result.hasSuffix("\n") {
-                    result += "\n"
-                    logger.debug("Added trailing newline to match input")
-                }
-
-                let shouldUseResponseWindow = command.useResponseWindow || input.source == .imageOCRFallback
-
-                if shouldUseResponseWindow {
-                    let window = ResponseWindow(
-                        title: "\(command.name) Result",
-                        content: result,
-                        selectedText: input.source == .selectedText ? selectedText : "Image selection (OCR)",
-                        option: nil,
-                        provider: provider
-                    )
-
-                    WindowManager.shared.addResponseWindow(window)
-                    window.makeKeyAndOrderFront(nil)
-                    window.orderFrontRegardless()
-                } else {
-                    if command.preserveFormatting, selectedAttributedText != nil {
-                        replaceSelectedTextPreservingAttributes(with: result)
-                    } else {
-                        replaceSelectedText(with: result)
-                    }
-                }
-            } catch {
-                logger.error("Error processing command: \(error.localizedDescription)")
-            }
-        }
-    }
-
     // MARK: - Fixed: Proper Window Activation Verification
 
     func replaceSelectedText(with newText: String) {
@@ -551,23 +533,25 @@ final class AppState {
 
         // Reactivate previous application using cooperative activation
         if let previousApp = previousApplication {
-            NSApp.yieldActivation(toApplicationWithBundleIdentifier: previousApp.bundleIdentifier ?? "")
-            let didActivate = previousApp.activate(options: [.activateAllWindows])
+            NSApp.yieldActivation(to: previousApp)
+            let didActivate = previousApp.activate(from: .current, options: [.activateAllWindows])
             if !didActivate {
                 logger.warning("Failed to activate previous app: \(previousApp.bundleIdentifier ?? "unknown")")
             }
 
             // Wait for window activation, paste, then restore clipboard
-            activateWindowAndPaste(for: previousApp, clipboardSnapshot: clipboardSnapshot)
+            // Capture the changeCount after we wrote text so we can detect external changes
+            let changeCountAfterWrite = NSPasteboard.general.changeCount
+            activateWindowAndPaste(for: previousApp, clipboardSnapshot: clipboardSnapshot, expectedChangeCount: changeCountAfterWrite)
         }
     }
 
-    private func activateWindowAndPaste(for app: NSRunningApplication, clipboardSnapshot: ClipboardSnapshot) {
+    private func activateWindowAndPaste(for app: NSRunningApplication, clipboardSnapshot: ClipboardSnapshot, expectedChangeCount: Int) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let maxAttempts = 100 // ~1 second with 10ms intervals
-            let startTime = Date()
-            var attempts = 0
+            let deadline = Date().addingTimeInterval(2.0)
+            var pollInterval: Duration = .milliseconds(10)
+            let maxPollInterval: Duration = .milliseconds(80)
 
             while true {
                 if Task.isCancelled {
@@ -577,7 +561,17 @@ final class AppState {
 
                 let isFrontmost =
                     NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.bundleIdentifier
-                if isFrontmost || attempts >= maxAttempts || Date().timeIntervalSince(startTime) >= 2.0 {
+
+                if !isFrontmost && Date() >= deadline {
+                    // Timeout reached but target app is NOT frontmost — do NOT paste
+                    // into the wrong app. Leave the text on the clipboard so the user
+                    // can paste manually.
+                    logger.warning("Timeout reached without target app becoming frontmost. Text left on clipboard for manual paste.")
+                    self.showPasteTimeoutAlert(targetApp: app)
+                    return  // Don't restore clipboard — user needs text for manual paste
+                }
+
+                if isFrontmost {
                     // Perform the paste
                     self.simulatePaste()
 
@@ -589,20 +583,33 @@ final class AppState {
                         logger.debug("Paste delay interrupted: \(error.localizedDescription)")
                     }
 
-                    // Restore the original clipboard content
-                    let restored = NSPasteboard.general.restore(snapshot: clipboardSnapshot)
-                    if restored {
+                    // Restore the original clipboard content, but only if no external
+                    // app has modified the clipboard since we wrote our text to it
+                    let restoreOutcome = NSPasteboard.general.restoreIfUnchanged(
+                        snapshot: clipboardSnapshot,
+                        expectedChangeCount: expectedChangeCount
+                    )
+                    switch restoreOutcome {
+                    case .restored:
                         logger.debug("Clipboard restored after paste")
-                    } else {
+                    case .skippedExternalChange(let expected, let actual):
+                        logger.warning("Clipboard restore skipped after paste due to external change (expected \(expected), actual \(actual))")
+                        self.showClipboardRestoreSkippedAlert(
+                            targetApp: app,
+                            expectedChangeCount: expected,
+                            actualChangeCount: actual
+                        )
+                    case .failedWrite:
                         logger.error("Clipboard restore failed after paste")
                         self.showClipboardRestoreFailedAlert(targetApp: app)
                     }
                     break
                 }
 
-                attempts += 1
                 do {
-                    try await Task.sleep(for: .milliseconds(10))
+                    try await Task.sleep(for: pollInterval)
+                    // Exponential backoff to reduce polling pressure
+                    pollInterval = min(pollInterval * 2, maxPollInterval)
                 } catch {
                     logger.debug("Paste activation wait interrupted: \(error.localizedDescription)")
                     return
@@ -617,11 +624,22 @@ final class AppState {
             return
         }
 
+        if original.containsTextAttachments {
+            logger.warning("Attributed selection contains attachments; falling back to plain-text replacement")
+            replaceSelectedText(with: corrected)
+            return
+        }
+
         // Take a snapshot of the current clipboard BEFORE we overwrite it
         let clipboardSnapshot = NSPasteboard.general.createSnapshot()
 
         let mutable = NSMutableAttributedString(attributedString: original)
-        mutable.applyCharacterDiff(from: original.string, to: corrected)
+        let didApplyDiff = mutable.applyCharacterDiff(from: original.string, to: corrected)
+        if !didApplyDiff {
+            logger.warning("Failed to apply UTF-16-safe diff; falling back to plain-text replacement")
+            replaceSelectedText(with: corrected)
+            return
+        }
 
         let pb = NSPasteboard.general
         pb.prepareForNewContents(with: [])
@@ -656,12 +674,13 @@ final class AppState {
         pb.writeObjects([item])
 
         if let previous = previousApplication {
-            NSApp.yieldActivation(toApplicationWithBundleIdentifier: previous.bundleIdentifier ?? "")
-            let didActivate = previous.activate(options: [.activateAllWindows])
+            NSApp.yieldActivation(to: previous)
+            let didActivate = previous.activate(from: .current, options: [.activateAllWindows])
             if !didActivate {
                 logger.warning("Failed to activate previous app: \(previous.bundleIdentifier ?? "unknown")")
             }
-            activateWindowAndPaste(for: previous, clipboardSnapshot: clipboardSnapshot)
+            let changeCountAfterWrite = NSPasteboard.general.changeCount
+            activateWindowAndPaste(for: previous, clipboardSnapshot: clipboardSnapshot, expectedChangeCount: changeCountAfterWrite)
         }
     }
 
@@ -692,6 +711,23 @@ final class AppState {
         keyUp.post(tap: .cgSessionEventTap)
     }
 
+    private func showPasteTimeoutAlert(targetApp: NSRunningApplication) {
+        let alert = NSAlert()
+        alert.messageText = "Paste Could Not Complete"
+        let appName = targetApp.localizedName ?? targetApp.bundleIdentifier ?? "the target app"
+        alert.informativeText =
+            "Writing Tools couldn't paste into \(appName) because it didn't become active in time. The processed text is still on your clipboard — you can paste it manually with ⌘V."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+
+        NSApp.activate()
+        if let keyWindow = NSApp.keyWindow {
+            alert.beginSheetModal(for: keyWindow)
+        } else {
+            alert.runModal()
+        }
+    }
+
     private func showClipboardRestoreFailedAlert(targetApp: NSRunningApplication) {
         let alert = NSAlert()
         alert.messageText = "Clipboard Restore Failed"
@@ -708,43 +744,114 @@ final class AppState {
             alert.runModal()
         }
     }
+
+    private func showClipboardRestoreSkippedAlert(
+        targetApp: NSRunningApplication,
+        expectedChangeCount: Int,
+        actualChangeCount: Int
+    ) {
+        let alert = NSAlert()
+        alert.messageText = "Clipboard Was Updated by Another App"
+        let appName = targetApp.localizedName ?? targetApp.bundleIdentifier ?? "the target app"
+        alert.informativeText =
+            """
+            Writing Tools pasted into \(appName), but your clipboard changed before restoration.
+            Your clipboard was intentionally left unchanged to avoid overwriting newer content.
+            (Expected change count: \(expectedChangeCount), actual: \(actualChangeCount))
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+
+        NSApp.activate()
+        if let keyWindow = NSApp.keyWindow {
+            alert.beginSheetModal(for: keyWindow)
+        } else {
+            alert.runModal()
+        }
+    }
 }
 
 extension NSMutableAttributedString {
     /// Transforms *self* so that `self.string == new`, preserving
-    /// per-character attributes wherever possible.
-    func applyCharacterDiff(from old: String, to new: String) {
-        // Build the diff
-        let diff = Array(new).difference(from: Array(old))
+    /// attributes around the changed span wherever possible.
+    @discardableResult
+    func applyCharacterDiff(from old: String, to new: String) -> Bool {
+        guard old == self.string else {
+            logger.error("applyCharacterDiff precondition failed: receiver content does not match source text")
+            return false
+        }
 
-        // Collect removals & insertions with their offsets
-        var removals: [Int] = []
-        var insertions: [(offset: Int, char: Character)] = []
+        if old == new {
+            return true
+        }
 
-        for change in diff {
-            switch change {
-            case let .remove(offset, _, _):
-                removals.append(offset)
-            case let .insert(offset, element, _):
-                insertions.append((offset, element))
+        let oldChars = Array(old)
+        let newChars = Array(new)
+
+        // Find longest common prefix.
+        var prefix = 0
+        while prefix < oldChars.count &&
+              prefix < newChars.count &&
+              oldChars[prefix] == newChars[prefix] {
+            prefix += 1
+        }
+
+        // Find longest common suffix after the shared prefix.
+        var oldSuffix = oldChars.count
+        var newSuffix = newChars.count
+        while oldSuffix > prefix &&
+              newSuffix > prefix &&
+              oldChars[oldSuffix - 1] == newChars[newSuffix - 1] {
+            oldSuffix -= 1
+            newSuffix -= 1
+        }
+
+        let oldStartIndex = old.index(old.startIndex, offsetBy: prefix)
+        let oldEndIndex = old.index(old.startIndex, offsetBy: oldSuffix)
+
+        guard let utf16Start = oldStartIndex.samePosition(in: old.utf16),
+              let utf16End = oldEndIndex.samePosition(in: old.utf16) else {
+            logger.error("Failed to map Swift string indices to UTF-16 for attributed replacement")
+            return false
+        }
+
+        let location = old.utf16.distance(from: old.utf16.startIndex, to: utf16Start)
+        let length = old.utf16.distance(from: utf16Start, to: utf16End)
+        let range = NSRange(location: location, length: length)
+
+        let replacementText = String(newChars[prefix..<newSuffix])
+        let replacementAttributes: [NSAttributedString.Key: Any]
+        if location > 0 && location - 1 < self.length {
+            replacementAttributes = attributes(at: location - 1, effectiveRange: nil)
+        } else if location < self.length {
+            replacementAttributes = attributes(at: location, effectiveRange: nil)
+        } else {
+            replacementAttributes = [:]
+        }
+
+        replaceCharacters(
+            in: range,
+            with: NSAttributedString(string: replacementText, attributes: replacementAttributes)
+        )
+
+        let succeeded = (self.string == new)
+        if !succeeded {
+            logger.error("UTF-16-safe attributed diff produced mismatched result")
+        }
+        return succeeded
+    }
+}
+
+extension NSAttributedString {
+    var containsTextAttachments: Bool {
+        var hasAttachment = false
+        let fullRange = NSRange(location: 0, length: length)
+        enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, stop in
+            if value is NSTextAttachment {
+                hasAttachment = true
+                stop.pointee = true
             }
         }
-
-        // Apply removals back-to-front
-        for index in removals.sorted(by: >) {
-            deleteCharacters(in: NSRange(location: index, length: 1))
-        }
-
-        // Apply insertions front-to-back
-        for (index, ch) in insertions.sorted(by: { $0.offset < $1.offset }) {
-            let inherited: [NSAttributedString.Key: Any]
-            if index > 0 && index - 1 < self.length {
-                inherited = attributes(at: index - 1, effectiveRange: nil)
-            } else {
-                inherited = [:]
-            }
-            let piece = NSAttributedString(string: String(ch), attributes: inherited)
-            insert(piece, at: index)
-        }
+        return hasAttachment
     }
 }

@@ -9,6 +9,12 @@ import AppKit
 
 private let logger = AppLogger.logger("ClipboardSnapshot")
 
+enum ClipboardRestoreOutcome: Equatable {
+    case restored
+    case skippedExternalChange(expected: Int, actual: Int)
+    case failedWrite
+}
+
 /// A comprehensive snapshot of the clipboard state that captures all items and all types
 struct ClipboardSnapshot {
     /// All pasteboard items with their data
@@ -52,27 +58,14 @@ struct ClipboardSnapshot {
     @discardableResult
     func restore() -> Bool {
         let pb = NSPasteboard.general
+        let pasteboardItems = makePasteboardItems()
         pb.prepareForNewContents(with: [])
         
-        guard !items.isEmpty else {
+        guard !pasteboardItems.isEmpty else {
             logger.info("ClipboardSnapshot: No items to restore")
             return true
         }
-        
-        // Prepare pasteboard items
-        var pasteboardItems: [NSPasteboardItem] = []
-        
-        for itemData in items {
-            let pasteboardItem = NSPasteboardItem()
-            
-            // Set data for each type
-            for (type, data) in itemData {
-                pasteboardItem.setData(data, forType: type)
-            }
-            
-            pasteboardItems.append(pasteboardItem)
-        }
-        
+
         // Write all items to the pasteboard
         let success = pb.writeObjects(pasteboardItems)
         
@@ -82,6 +75,45 @@ struct ClipboardSnapshot {
             logger.error("ClipboardSnapshot: Failed to restore \(pasteboardItems.count) items")
         }
         return success
+    }
+    
+    /// Restores this snapshot only if the clipboard hasn't been modified by an external source.
+    ///
+    /// `expectedChangeCount` is the changeCount the pasteboard should have if only our
+    /// app has touched it since the snapshot was taken. If the pasteboard's current
+    /// changeCount differs, another app (or the user) has written to the clipboard
+    /// and we should not overwrite their content.
+    ///
+    /// Public pasteboard APIs don't provide a cross-process atomic compare-and-swap.
+    /// We therefore do all non-essential work before checking `changeCount`, then
+    /// perform the check and write back-to-back on the same thread.
+    @discardableResult
+    func restoreIfUnchanged(expectedChangeCount: Int) -> ClipboardRestoreOutcome {
+        let pb = NSPasteboard.general
+        let pasteboardItems = makePasteboardItems()
+
+        // Read changeCount immediately before we clear/write to minimise TOCTOU.
+        let currentChangeCount = pb.changeCount
+        if currentChangeCount != expectedChangeCount {
+            logger.info("ClipboardSnapshot: Skipping restore — clipboard was modified externally (expected \(expectedChangeCount), actual \(currentChangeCount))")
+            return .skippedExternalChange(expected: expectedChangeCount, actual: currentChangeCount)
+        }
+
+        pb.prepareForNewContents(with: [])
+
+        guard !pasteboardItems.isEmpty else {
+            logger.info("ClipboardSnapshot: No items to restore")
+            return .restored
+        }
+
+        let success = pb.writeObjects(pasteboardItems)
+        if success {
+            logger.debug("ClipboardSnapshot: Successfully restored \(pasteboardItems.count) items")
+            return .restored
+        } else {
+            logger.error("ClipboardSnapshot: Failed to restore \(pasteboardItems.count) items")
+            return .failedWrite
+        }
     }
     
     /// Returns true if this snapshot contains any data
@@ -102,6 +134,16 @@ struct ClipboardSnapshot {
         }
         return description
     }
+
+    private func makePasteboardItems() -> [NSPasteboardItem] {
+        items.map { itemData in
+            let pasteboardItem = NSPasteboardItem()
+            for (type, data) in itemData {
+                pasteboardItem.setData(data, forType: type)
+            }
+            return pasteboardItem
+        }
+    }
 }
 
 extension NSPasteboard {
@@ -114,5 +156,12 @@ extension NSPasteboard {
     @discardableResult
     func restore(snapshot: ClipboardSnapshot) -> Bool {
         snapshot.restore()
+    }
+    
+    /// Convenience method to restore a snapshot only if the clipboard hasn't been
+    /// modified externally since `expectedChangeCount`.
+    @discardableResult
+    func restoreIfUnchanged(snapshot: ClipboardSnapshot, expectedChangeCount: Int) -> ClipboardRestoreOutcome {
+        snapshot.restoreIfUnchanged(expectedChangeCount: expectedChangeCount)
     }
 }

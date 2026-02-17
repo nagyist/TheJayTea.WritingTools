@@ -13,7 +13,15 @@ final class KeychainManager: @unchecked Sendable {
     private let serviceName = "com.aryamirsepasi.writing-tools"
     private let customProviderKeyPrefix = "custom_provider_api_key_"
 
-    private init() {}
+    /// Serializes all keychain operations so that delete+add sequences are atomic.
+    /// Uses a serial DispatchQueue instead of NSLock to avoid potential deadlocks
+    /// when called from async contexts (e.g. Task.detached in AppSettings).
+    private let queue = DispatchQueue(label: "com.aryamirsepasi.writing-tools.keychain")
+    private let queueSpecificKey = DispatchSpecificKey<Bool>()
+
+    private init() {
+        queue.setSpecific(key: queueSpecificKey, value: true)
+    }
     
     enum KeychainError: LocalizedError {
         case failedToSave(OSStatus)
@@ -55,12 +63,16 @@ final class KeychainManager: @unchecked Sendable {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
         ]
         
-        // Try to delete existing first
-        SecItemDelete(query as CFDictionary)
-        
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw KeychainError.failedToSave(status)
+        // Dispatch synchronously to make delete+add atomic
+        debugAssertNotOnQueue(function: #function)
+        try queue.sync {
+            // Try to delete existing first
+            SecItemDelete(query as CFDictionary)
+            
+            let status = SecItemAdd(query as CFDictionary, nil)
+            guard status == errSecSuccess else {
+                throw KeychainError.failedToSave(status)
+            }
         }
     }
     
@@ -75,22 +87,25 @@ final class KeychainManager: @unchecked Sendable {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        
-        if status == errSecItemNotFound {
-            return nil
+        debugAssertNotOnQueue(function: #function)
+        return try queue.sync { () throws -> String? in
+            var result: AnyObject?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            
+            if status == errSecItemNotFound {
+                return nil
+            }
+            
+            guard status == errSecSuccess else {
+                throw KeychainError.failedToRead(status)
+            }
+            
+            guard let data = result as? Data else {
+                throw KeychainError.noDataFound
+            }
+            
+            return String(data: data, encoding: .utf8)
         }
-        
-        guard status == errSecSuccess else {
-            throw KeychainError.failedToRead(status)
-        }
-        
-        guard let data = result as? Data else {
-            throw KeychainError.noDataFound
-        }
-        
-        return String(data: data, encoding: .utf8)
     }
     
     // MARK: - Delete
@@ -102,9 +117,12 @@ final class KeychainManager: @unchecked Sendable {
             kSecAttrService as String: serviceName
         ]
         
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainError.failedToDelete(status)
+        debugAssertNotOnQueue(function: #function)
+        try queue.sync {
+            let status = SecItemDelete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw KeychainError.failedToDelete(status)
+            }
         }
     }
     
@@ -161,9 +179,14 @@ final class KeychainManager: @unchecked Sendable {
             throw KeychainError.failedToSave(-1)
         }
 
-        try deleteSynchronizable(forKey: key)
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecAttrService as String: serviceName,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
+        ]
 
-        let query: [String: Any] = [
+        let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
             kSecAttrService as String: serviceName,
@@ -172,9 +195,18 @@ final class KeychainManager: @unchecked Sendable {
             kSecAttrSynchronizable as String: kCFBooleanTrue as Any
         ]
 
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw KeychainError.failedToSave(status)
+        // Dispatch synchronously to make delete+add atomic
+        debugAssertNotOnQueue(function: #function)
+        try queue.sync {
+            let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
+            guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else {
+                throw KeychainError.failedToDelete(deleteStatus)
+            }
+
+            let status = SecItemAdd(addQuery as CFDictionary, nil)
+            guard status == errSecSuccess else {
+                throw KeychainError.failedToSave(status)
+            }
         }
     }
 
@@ -188,22 +220,25 @@ final class KeychainManager: @unchecked Sendable {
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
         ]
 
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        debugAssertNotOnQueue(function: #function)
+        return try queue.sync { () throws -> String? in
+            var result: AnyObject?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
 
-        if status == errSecItemNotFound {
-            return nil
+            if status == errSecItemNotFound {
+                return nil
+            }
+
+            guard status == errSecSuccess else {
+                throw KeychainError.failedToRead(status)
+            }
+
+            guard let data = result as? Data else {
+                throw KeychainError.noDataFound
+            }
+
+            return String(data: data, encoding: .utf8)
         }
-
-        guard status == errSecSuccess else {
-            throw KeychainError.failedToRead(status)
-        }
-
-        guard let data = result as? Data else {
-            throw KeychainError.noDataFound
-        }
-
-        return String(data: data, encoding: .utf8)
     }
 
     func deleteSynchronizable(forKey key: String) throws {
@@ -214,9 +249,12 @@ final class KeychainManager: @unchecked Sendable {
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
         ]
 
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainError.failedToDelete(status)
+        debugAssertNotOnQueue(function: #function)
+        try queue.sync {
+            let status = SecItemDelete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw KeychainError.failedToDelete(status)
+            }
         }
     }
 
@@ -240,5 +278,13 @@ final class KeychainManager: @unchecked Sendable {
     func deleteCustomProviderApiKey(for commandId: UUID) {
         let key = customProviderKeyPrefix + commandId.uuidString
         try? deleteSynchronizable(forKey: key)
+    }
+
+    private func debugAssertNotOnQueue(function: StaticString = #function) {
+        #if DEBUG
+        if DispatchQueue.getSpecific(key: queueSpecificKey) == true {
+            assertionFailure("KeychainManager.\(function) called from keychain queue; queue.sync would deadlock.")
+        }
+        #endif
     }
 }

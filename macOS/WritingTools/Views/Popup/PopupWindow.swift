@@ -42,7 +42,7 @@ class PopupWindow: NSWindow {
       if let bundleId = self?.appState.previousApplication?.bundleIdentifier {
         NSApp.yieldActivation(toApplicationWithBundleIdentifier: bundleId)
       }
-      self?.appState.previousApplication?.activate()
+      self?.appState.previousApplication?.activate(from: .current)
     }
     
     // Use a wrapper view that observes changes and triggers window size updates

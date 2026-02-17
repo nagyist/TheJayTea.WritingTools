@@ -3,6 +3,7 @@ import Observation
 
 extension Notification.Name {
     static let iCloudCommandSyncPreferenceDidChange = Notification.Name("iCloudCommandSyncPreferenceDidChange")
+    static let apiKeyDidChange = Notification.Name("apiKeyDidChange")
 }
 
 // A singleton for app-wide settings that wraps UserDefaults access
@@ -13,21 +14,20 @@ final class AppSettings {
     
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let keychain = KeychainManager.shared
-    @ObservationIgnored private var keychainWriteTasks: [String: Task<Void, Never>] = [:]
-    @ObservationIgnored private var keychainWriteGenerations: [String: UInt64] = [:]
-    @ObservationIgnored private let keychainWriteDelay: Duration = .milliseconds(350)
+    @ObservationIgnored private var isBootstrapping = true
+    
     
     // MARK: - Published Settings
     var themeStyle: String {
         didSet {
             defaults.set(themeStyle, forKey: "theme_style")
-            useGradientTheme = (themeStyle != "standard")
         }
     }
     
     // API Keys now use computed properties backed by Keychain
     var geminiApiKey: String = "" {
         didSet {
+            guard !isBootstrapping, oldValue != geminiApiKey else { return }
             scheduleKeychainWrite(geminiApiKey, forKey: "gemini_api_key")
         }
     }
@@ -42,6 +42,7 @@ final class AppSettings {
     
     var openAIApiKey: String = "" {
         didSet {
+            guard !isBootstrapping, oldValue != openAIApiKey else { return }
             scheduleKeychainWrite(openAIApiKey, forKey: "openai_api_key")
         }
     }
@@ -75,7 +76,7 @@ final class AppSettings {
     }
     
     var useGradientTheme: Bool {
-        didSet { defaults.set(useGradientTheme, forKey: "use_gradient_theme") }
+        themeStyle != "standard"
     }
     
     // MARK: - HotKey data
@@ -91,6 +92,7 @@ final class AppSettings {
     
     var mistralApiKey: String = "" {
         didSet {
+            guard !isBootstrapping, oldValue != mistralApiKey else { return }
             scheduleKeychainWrite(mistralApiKey, forKey: "mistral_api_key")
         }
     }
@@ -122,6 +124,7 @@ final class AppSettings {
     
     var anthropicApiKey: String = "" {
         didSet {
+            guard !isBootstrapping, oldValue != anthropicApiKey else { return }
             scheduleKeychainWrite(anthropicApiKey, forKey: "anthropic_api_key")
         }
     }
@@ -132,6 +135,7 @@ final class AppSettings {
     
     var openRouterApiKey: String = "" {
         didSet {
+            guard !isBootstrapping, oldValue != openRouterApiKey else { return }
             scheduleKeychainWrite(openRouterApiKey, forKey: "openrouter_api_key")
         }
     }
@@ -162,11 +166,20 @@ final class AppSettings {
     // MARK: - Init
     private init() {
         let defaults = UserDefaults.standard
+        let legacyGradientThemeKey = "use_gradient_theme"
         
         // MARK: - Perform Keychain Migration (One-time on first launch after update)
         KeychainMigrationManager.shared.migrateIfNeeded()
         
-        // Initialize the theme style first
+        // Migrate legacy boolean theme key to theme_style once, then remove legacy key.
+        if defaults.string(forKey: "theme_style") == nil,
+           defaults.object(forKey: legacyGradientThemeKey) != nil {
+            let migratedThemeStyle = defaults.bool(forKey: legacyGradientThemeKey) ? "gradient" : "standard"
+            defaults.set(migratedThemeStyle, forKey: "theme_style")
+            defaults.removeObject(forKey: legacyGradientThemeKey)
+        }
+
+        // Initialize the theme style first.
         self.themeStyle = defaults.string(forKey: "theme_style") ?? "gradient"
         
         // Load API Keys from Keychain (post-migration)
@@ -193,7 +206,6 @@ final class AppSettings {
         self.currentProvider = defaults.string(forKey: "current_provider") ?? "gemini"
         self.shortcutText = defaults.string(forKey: "shortcut") ?? "⌥ Space"
         self.hasCompletedOnboarding = defaults.bool(forKey: "has_completed_onboarding")
-        self.useGradientTheme = defaults.bool(forKey: "use_gradient_theme")
         
         // HotKey
         self.hotKeyCode = defaults.integer(forKey: "hotKey_keyCode")
@@ -217,33 +229,21 @@ final class AppSettings {
 
         // Cloud command sync setting defaults to false until explicitly enabled.
         self.enableICloudCommandSync = defaults.object(forKey: "enable_icloud_command_sync") as? Bool ?? false
+
+        isBootstrapping = false
     }
 
+    /// Writes an API key to the Keychain immediately.
+    /// API keys change rarely (only when edited in Settings), so there is no
+    /// need for debouncing. Writing immediately avoids data loss if the app
+    /// crashes or is force-quit before a debounced write completes.
     private func scheduleKeychainWrite(_ value: String, forKey key: String) {
-        let generation = (keychainWriteGenerations[key] ?? 0) + 1
-        keychainWriteGenerations[key] = generation
-        keychainWriteTasks[key]?.cancel()
+        // Notify observers that an API key changed so caches can be invalidated
+        NotificationCenter.default.post(name: .apiKeyDidChange, object: nil)
 
-        keychainWriteTasks[key] = Task { [weak self] in
-            guard let self else { return }
-            defer { self.clearKeychainWriteTaskReference(forKey: key, generation: generation) }
-            try? await Task.sleep(for: self.keychainWriteDelay)
-            guard !Task.isCancelled else { return }
-            let keychainRef = self.keychain
-            let valueToSave = value
-            let keyToSave = key
-            Task.detached(priority: .utility) {
-                try? keychainRef.save(valueToSave, forKey: keyToSave)
-            }
-        }
+        try? keychain.save(value, forKey: key)
     }
 
-    private func clearKeychainWriteTaskReference(forKey key: String, generation: UInt64) {
-        guard keychainWriteGenerations[key] == generation else { return }
-        keychainWriteTasks[key] = nil
-        keychainWriteGenerations[key] = nil
-    }
-    
     // MARK: - Convenience
     func resetAll() {
         guard let domain = Bundle.main.bundleIdentifier else { return }

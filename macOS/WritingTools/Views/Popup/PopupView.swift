@@ -13,8 +13,8 @@ final class PopupViewModel {
 struct PopupView: View {
   @Bindable var appState: AppState
   @Bindable var viewModel: PopupViewModel
+  @Bindable private var settings = AppSettings.shared
   @Environment(\.colorScheme) var colorScheme
-  @AppStorage("use_gradient_theme") private var useGradientTheme = false
 
   @State private var customText: String = ""
   @State private var isCustomLoading: Bool = false
@@ -134,7 +134,7 @@ struct PopupView: View {
       }
     }
     .padding(.bottom, 8)
-    .windowBackground(useGradient: useGradientTheme, cornerRadius: 20)
+    .windowBackground(useGradient: settings.useGradientTheme, cornerRadius: 20)
     .overlay(
       RoundedRectangle(cornerRadius: 20)
         .strokeBorder(Color.gray.opacity(0.2), lineWidth: 1)
@@ -166,6 +166,21 @@ struct PopupView: View {
     .sheet(isPresented: $showingCommandsView) {
       CommandsView(commandManager: appState.commandManager)
       // Note: PopupWindow observes commandManager.commands directly via @Observable
+    }
+    // Suppress popup auto-dismiss while a sheet is presenting or presented.
+    // This prevents a race where windowDidResignKey fires before the sheet
+    // is attached to the window.
+    .onChange(of: editingCommand) { _, newValue in
+      WindowManager.shared.setPopupDismissSuppressed(
+        newValue != nil,
+        reason: .commandEditorSheet
+      )
+    }
+    .onChange(of: showingCommandsView) { _, newValue in
+      WindowManager.shared.setPopupDismissSuppressed(
+        newValue,
+        reason: .commandsManagerSheet
+      )
     }
     .alert("Error", isPresented: $showingErrorAlert) {
       Button("OK", role: .cancel) {}
@@ -217,150 +232,55 @@ struct PopupView: View {
   private func processCommandAndCloseWhenDone(
     _ command: CommandModel
   ) async {
-    guard !appState.isProcessing else {
-      processingCommandId = nil
-      return
-    }
-
-    appState.isProcessing = true
-    defer { appState.isProcessing = false }
+    defer { processingCommandId = nil }
 
     do {
-      let systemPrompt = command.prompt
-      let input = try await appState.resolveCommandInput(mode: .textOrImagesWithOCRFallback)
-      let userText = appState.selectedText
-
-      // Get the appropriate provider for this command (respects per-command overrides)
-      let provider = appState.getProvider(for: command)
-
-      let shouldUseResponseWindow = command.useResponseWindow || input.source == .imageOCRFallback
-
-      if shouldUseResponseWindow {
-        // Open the response window immediately and stream the response inside it
-        let window = ResponseWindow(
-          title: command.name,
-          selectedText: input.source == .selectedText ? userText : "Image selection (OCR)",
-          option: .proofread,
-          provider: provider,
-          systemPrompt: systemPrompt,
-          userPrompt: input.userPrompt,
-          images: input.images
-        )
-
-        // Dismiss the popup without reactivating the previous app,
-        // so the response window stays in front.
-        // Don't clear images — the response window already captured them.
-        WindowManager.shared.dismissPopup(clearImages: false)
-        WindowManager.shared.addResponseWindow(window)
-
-        processingCommandId = nil
-      } else {
-        // Inline replacement: need the full response before pasting
-        let result = try await provider.processText(
-          systemPrompt: systemPrompt,
-          userPrompt: input.userPrompt,
-          images: input.images,
-          streaming: false
-        )
-
-        if command.preserveFormatting {
-          appState.replaceSelectedTextPreservingAttributes(with: result)
-        } else {
-          appState.replaceSelectedText(with: result)
-        }
-
-        closeAction()
-        processingCommandId = nil
-      }
+      _ = try await CommandExecutionEngine.shared.executeCommand(
+        command,
+        source: .popup,
+        closePopupOnInlineCompletion: closeAction
+      )
+    } catch let error as CommandExecutionEngineError {
+      logger.error("Error processing command: \(error.localizedDescription)")
+      errorMessage = error.localizedDescription
+      showingErrorAlert = true
     } catch {
       logger.error("Error processing command: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
       showingErrorAlert = true
-      processingCommandId = nil
     }
   }
 
   private func processCustomChange() {
-    guard !customText.isEmpty, !appState.isProcessing else { return }
+    let instruction = customText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !instruction.isEmpty else { return }
     isCustomLoading = true
-    processCustomInstruction(customText)
+    Task {
+      await processCustomInstruction(instruction)
+    }
   }
 
-  private func processCustomInstruction(_ instruction: String) {
-    guard !instruction.isEmpty, !appState.isProcessing else { return }
-    appState.isProcessing = true
+  private func processCustomInstruction(_ instruction: String) async {
+    defer { isCustomLoading = false }
 
-    // Capture setting value once at the start
-    let openInResponseWindow = AppSettings.shared.openCustomCommandsInResponseWindow
-
-    let systemPrompt = """
-    You are a writing and coding assistant. Your sole task is to respond \
-    to the user's instruction thoughtfully and comprehensively.
-    If the instruction is a question, provide a detailed answer. But \
-    always return the best and most accurate answer and not different \
-    options.
-    If it's a request for help, provide clear guidance and examples where \
-    appropriate. Make sure to use the language used or specified by the \
-    user instruction.
-    Use Markdown formatting to make your response more readable.
-    """
-
-    let userPrompt = appState.selectedText.isEmpty
-      ? instruction
-      : """
-        User's instruction: \(instruction)
-
-        Text:
-        \(appState.selectedText)
-        """
-
-    if openInResponseWindow {
-      // Open the response window immediately and stream inside it
-      let window = ResponseWindow(
-        title: "AI Response",
-        selectedText: appState.selectedText.isEmpty
-          ? instruction : appState.selectedText,
-        option: .proofread,
-        provider: appState.activeProvider,
-        systemPrompt: systemPrompt,
-        userPrompt: userPrompt,
-        images: appState.selectedImages
+    do {
+      let outcome = try await CommandExecutionEngine.shared.executeCustomInstruction(
+        instruction,
+        source: .popup,
+        openInResponseWindow: AppSettings.shared.openCustomCommandsInResponseWindow,
+        closePopupOnInlineCompletion: closeAction
       )
-
-      // Dismiss the popup without reactivating the previous app,
-      // so the response window stays in front.
-      // Don't clear images — the response window already captured them.
-      WindowManager.shared.dismissPopup(clearImages: false)
-      WindowManager.shared.addResponseWindow(window)
-
-      customText = ""
-      isCustomLoading = false
-      appState.isProcessing = false
-    } else {
-      // Inline replacement: need the full response before pasting
-      Task {
-        defer { appState.isProcessing = false }
-
-        do {
-          let result = try await appState.activeProvider.processText(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            images: appState.selectedImages,
-            streaming: false
-          )
-
-          appState.replaceSelectedText(with: result)
-
-          customText = ""
-          isCustomLoading = false
-          closeAction()
-        } catch {
-          logger.error("Error processing text: \(error.localizedDescription)")
-          errorMessage = error.localizedDescription
-          showingErrorAlert = true
-          isCustomLoading = false
-        }
+      if outcome != .skippedBecauseBusy {
+        customText = ""
       }
+    } catch let error as CommandExecutionEngineError {
+      logger.error("Error processing text: \(error.localizedDescription)")
+      errorMessage = error.localizedDescription
+      showingErrorAlert = true
+    } catch {
+      logger.error("Error processing text: \(error.localizedDescription)")
+      errorMessage = error.localizedDescription
+      showingErrorAlert = true
     }
   }
 }

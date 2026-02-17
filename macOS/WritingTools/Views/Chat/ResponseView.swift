@@ -69,25 +69,40 @@ struct ResponseView: View {
     @State private var errorMessage: String?
     @State private var showError: Bool = false
     
-    init(content: String, selectedText: String, option: WritingOption? = nil, provider: any AIProvider) {
+    init(
+        content: String,
+        selectedText: String,
+        option: WritingOption? = nil,
+        provider: any AIProvider,
+        continuationSystemPrompt: String? = nil
+    ) {
         self._viewModel = State(initialValue: ResponseViewModel(
             content: content,
             selectedText: selectedText,
             option: option,
-            provider: provider
+            provider: provider,
+            continuationSystemPrompt: continuationSystemPrompt
         ))
     }
 
     /// Streaming initializer: opens immediately and streams the AI response.
-    init(selectedText: String, option: WritingOption? = nil, provider: any AIProvider,
-         systemPrompt: String, userPrompt: String, images: [Data]) {
+    init(
+        selectedText: String,
+        option: WritingOption? = nil,
+        provider: any AIProvider,
+        systemPrompt: String,
+        userPrompt: String,
+        images: [Data],
+        continuationSystemPrompt: String? = nil
+    ) {
         self._viewModel = State(initialValue: ResponseViewModel(
             selectedText: selectedText,
             option: option,
             provider: provider,
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
-            images: images
+            images: images,
+            continuationSystemPrompt: continuationSystemPrompt
         ))
     }
     
@@ -230,6 +245,9 @@ struct ResponseView: View {
         } message: { message in
             Text(message)
         }
+        .onDisappear {
+            viewModel.cancelOngoingTasks()
+        }
     }
     
     private func sendMessage() {
@@ -237,21 +255,17 @@ struct ResponseView: View {
         let question = inputText
         inputText = ""
         isRegenerating = true
-        
-        Task {
-            do {
-                try await viewModel.processFollowUpQuestion(question)
-                await MainActor.run {
-                    isRegenerating = false
-                }
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    showError = true
-                    isRegenerating = false
-                }
+
+        viewModel.startFollowUpQuestion(
+            question,
+            onCompletion: {
+                isRegenerating = false
+            },
+            onFailure: { message in
+                errorMessage = message
+                showError = true
             }
-        }
+        )
     }
 }
 
@@ -386,6 +400,7 @@ final class ResponseViewModel {
     private let content: String
     private let selectedText: String
     private let option: WritingOption?
+    private let continuationSystemPrompt: String?
     private let provider: any AIProvider
 
     // Store conversation history for context
@@ -394,12 +409,23 @@ final class ResponseViewModel {
     // Debounce task for font size persistence
     @ObservationIgnored
     private var fontSizeSaveTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var initialStreamingTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var followUpStreamingTask: Task<Void, Never>?
 
-    init(content: String, selectedText: String, option: WritingOption?, provider: any AIProvider) {
+    init(
+        content: String,
+        selectedText: String,
+        option: WritingOption?,
+        provider: any AIProvider,
+        continuationSystemPrompt: String?
+    ) {
         // 🔧 Normalize markdown content (strip outer code blocks + normalize LaTeX)
         self.content = content.normalizedForMarkdown()
         self.selectedText = selectedText
         self.option = option
+        self.continuationSystemPrompt = continuationSystemPrompt ?? option?.systemPrompt
         self.provider = provider
 
         // Load saved font size from UserDefaults, or use default
@@ -417,11 +443,19 @@ final class ResponseViewModel {
     }
 
     /// Streaming initializer: opens with an empty streaming message and begins generating immediately.
-    init(selectedText: String, option: WritingOption?, provider: any AIProvider,
-         systemPrompt: String, userPrompt: String, images: [Data]) {
+    init(
+        selectedText: String,
+        option: WritingOption?,
+        provider: any AIProvider,
+        systemPrompt: String,
+        userPrompt: String,
+        images: [Data],
+        continuationSystemPrompt: String?
+    ) {
         self.content = ""
         self.selectedText = selectedText
         self.option = option
+        self.continuationSystemPrompt = continuationSystemPrompt ?? option?.systemPrompt ?? systemPrompt
         self.provider = provider
 
         let savedFontSize = UserDefaults.standard.object(forKey: Self.fontSizeKey) as? CGFloat
@@ -435,14 +469,65 @@ final class ResponseViewModel {
             conversationHistory.append((role: "user", content: selectedText))
         }
 
-        // Kick off streaming
-        Task { @MainActor [weak self] in
-            await self?.streamInitialResponse(
+        startInitialStreaming(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            images: images
+        )
+    }
+
+    private func startInitialStreaming(
+        systemPrompt: String,
+        userPrompt: String,
+        images: [Data]
+    ) {
+        initialStreamingTask?.cancel()
+        initialStreamingTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.streamInitialResponse(
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 images: images
             )
+            self.initialStreamingTask = nil
         }
+    }
+
+    func startFollowUpQuestion(
+        _ question: String,
+        onCompletion: @escaping @MainActor () -> Void,
+        onFailure: @escaping @MainActor (String) -> Void
+    ) {
+        followUpStreamingTask?.cancel()
+        followUpStreamingTask = Task { @MainActor [weak self] in
+            guard let self else {
+                onCompletion()
+                return
+            }
+
+            defer {
+                self.followUpStreamingTask = nil
+                onCompletion()
+            }
+
+            do {
+                try await self.processFollowUpQuestion(question)
+            } catch is CancellationError {
+                return
+            } catch {
+                onFailure(error.localizedDescription)
+            }
+        }
+    }
+
+    func cancelOngoingTasks() {
+        initialStreamingTask?.cancel()
+        followUpStreamingTask?.cancel()
+        fontSizeSaveTask?.cancel()
+        initialStreamingTask = nil
+        followUpStreamingTask = nil
+        fontSizeSaveTask = nil
+        isProcessing = false
     }
 
     /// Streams the initial AI response into the first message.
@@ -459,7 +544,8 @@ final class ResponseViewModel {
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 images: images
-            ) { [self] chunk in
+            ) { [weak self] chunk in
+                guard let self else { return }
                 accumulatedContent += chunk
                 let now = ContinuousClock.now
                 if now - lastUIFlushTime >= minUIFlushInterval {
@@ -478,6 +564,11 @@ final class ResponseViewModel {
             }
 
             conversationHistory.append((role: "assistant", content: normalizedResponse))
+            isProcessing = false
+        } catch is CancellationError {
+            if let idx = messages.firstIndex(where: { $0.id == messageId }) {
+                messages[idx].isStreaming = false
+            }
             isProcessing = false
         } catch {
             // Show error in the streaming message rather than removing it
@@ -530,7 +621,8 @@ final class ResponseViewModel {
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 images: [] // Follow-up questions don't include images
-            ) { [self] chunk in
+            ) { [weak self] chunk in
+                guard let self else { return }
                 accumulatedContent += chunk
                 let now = ContinuousClock.now
                 if now - lastUIFlushTime >= minUIFlushInterval {
@@ -575,8 +667,17 @@ final class ResponseViewModel {
     }
     
     private func buildSystemPrompt() -> String {
-        // Use the original option's system prompt if available, otherwise use a general one
-        if let option = option {
+        if let continuationSystemPrompt {
+            return """
+            You are a helpful AI assistant continuing a conversation about text modification.
+            
+            Original task: \(continuationSystemPrompt)
+            
+            The user may ask follow-up questions or request modifications. Provide helpful, 
+            contextual responses based on the conversation history. Use Markdown formatting 
+            where appropriate.
+            """
+        } else if let option = option {
             return """
             You are a helpful AI assistant continuing a conversation about text modification.
             
@@ -631,6 +732,12 @@ final class ResponseViewModel {
             try? await Task.sleep(for: .seconds(2))
             self.showCopyConfirmation = false
         }
+    }
+
+    deinit {
+        initialStreamingTask?.cancel()
+        followUpStreamingTask?.cancel()
+        fontSizeSaveTask?.cancel()
     }
 }
 

@@ -66,7 +66,7 @@ final class MistralProvider: AIProvider {
             // Extract OCR text from images (if any) and append to user prompt.
             var combinedPrompt = userPrompt
             if !images.isEmpty {
-                let ocrText = await OCRManager.shared.extractText(from: images)
+                let ocrText = try await OCRManager.shared.extractText(from: images)
                 if !ocrText.isEmpty {
                     combinedPrompt += "\nExtracted Text: \(ocrText)"
                 }
@@ -142,7 +142,7 @@ final class MistralProvider: AIProvider {
 
         var combinedPrompt = userPrompt
         if !images.isEmpty {
-            let ocrText = await OCRManager.shared.extractText(from: images)
+            let ocrText = try await OCRManager.shared.extractText(from: images)
             if !ocrText.isEmpty {
                 combinedPrompt += "\nExtracted Text: \(ocrText)"
             }

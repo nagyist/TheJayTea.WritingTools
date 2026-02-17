@@ -158,11 +158,8 @@ struct OnboardingPermissionsHelper {
   }
 
   static func requestScreenRecording(completion: @escaping (Bool) -> Void) {
-    Task.detached(priority: .userInitiated) {
-      let granted = CGRequestScreenCaptureAccess()
-      await MainActor.run {
-        completion(granted)
-      }
-    }
+    // CGRequestScreenCaptureAccess may present system UI, so it must run on the main thread.
+    let granted = CGRequestScreenCaptureAccess()
+    completion(granted)
   }
 }

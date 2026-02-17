@@ -7,13 +7,24 @@ private let logger = AppLogger.logger("WindowManager")
 class WindowManager: NSObject, NSWindowDelegate {
     static let shared = WindowManager()
 
-    private var onboardingWindow =
-        NSMapTable<NSWindow, NSHostingView<OnboardingView>>.strongToWeakObjects()
-    private var settingsWindow =
-        NSMapTable<NSWindow, NSHostingView<SettingsView>>.strongToWeakObjects()
+    private var onboardingWindow: NSWindow?
+    private var settingsWindow: NSWindow?
 
     // Track a single PopupWindow
     private weak var popupWindow: PopupWindow?
+
+    enum PopupDismissSuppressionReason: Hashable {
+        case commandEditorSheet
+        case commandsManagerSheet
+    }
+
+    private var popupDismissSuppressionReasons: Set<PopupDismissSuppressionReason> = []
+    private var popupDismissSuppressionResetTask: Task<Void, Never>?
+    private let popupDismissSuppressionFailsafeDelay: Duration = .seconds(2)
+
+    var isPopupDismissSuppressed: Bool {
+        !popupDismissSuppressionReasons.isEmpty
+    }
 
     private var responseWindows = NSHashTable<ResponseWindow>.weakObjects()
 
@@ -53,7 +64,24 @@ class WindowManager: NSObject, NSWindowDelegate {
         window.delegate = self
     }
 
+    func setPopupDismissSuppressed(
+        _ isSuppressed: Bool,
+        reason: PopupDismissSuppressionReason
+    ) {
+        if isSuppressed {
+            popupDismissSuppressionReasons.insert(reason)
+            schedulePopupDismissSuppressionFailsafe()
+        } else {
+            popupDismissSuppressionReasons.remove(reason)
+            if popupDismissSuppressionReasons.isEmpty {
+                popupDismissSuppressionResetTask?.cancel()
+                popupDismissSuppressionResetTask = nil
+            }
+        }
+    }
+
     func dismissPopup(clearImages: Bool = true) {
+        clearPopupDismissSuppressionState()
         if let window = self.popupWindow {
             window.close()
             self.popupWindow = nil
@@ -67,8 +95,14 @@ class WindowManager: NSObject, NSWindowDelegate {
     // MARK: - Onboarding & Settings
 
     func transitionFromOnboardingToSettings(appState: AppState) {
-        let currentOnboardingWindow =
-            onboardingWindow.keyEnumerator().nextObject() as? NSWindow
+        if let existingSettingsWindow = settingsWindow, existingSettingsWindow.isVisible {
+            onboardingWindow?.close()
+            onboardingWindow = nil
+            bringWindowToFront(existingSettingsWindow)
+            return
+        }
+
+        let currentOnboardingWindow = onboardingWindow
 
         let newSettingsWindow = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 520),
@@ -88,25 +122,23 @@ class WindowManager: NSObject, NSWindowDelegate {
         newSettingsWindow.contentView = hostingView
         newSettingsWindow.delegate = self
 
-        settingsWindow.setObject(hostingView, forKey: newSettingsWindow)
+        settingsWindow = newSettingsWindow
 
         // Center window BEFORE display
         newSettingsWindow.level = .normal
         newSettingsWindow.center()
         
-        NSApp.activate()
-        newSettingsWindow.makeKeyAndOrderFront(nil)
-        
         currentOnboardingWindow?.close()
-        onboardingWindow.removeAllObjects()
+        onboardingWindow = nil
+        
+        bringWindowToFront(newSettingsWindow)
     }
 
     func setOnboardingWindow(
         _ window: NSWindow,
         hostingView: NSHostingView<OnboardingView>
     ) {
-        onboardingWindow.removeAllObjects()
-        onboardingWindow.setObject(hostingView, forKey: window)
+        onboardingWindow = window
         window.delegate = self
         window.level = .floating
         window.identifier = NSUserInterfaceItemIdentifier("OnboardingWindow")
@@ -118,16 +150,15 @@ class WindowManager: NSObject, NSWindowDelegate {
         _ window: NSWindow,
         hostingView: NSHostingView<SettingsView>
     ) {
-        settingsWindow.removeAllObjects()
-        settingsWindow.setObject(hostingView, forKey: window)
+        settingsWindow = window
         window.delegate = self
         window.identifier = NSUserInterfaceItemIdentifier("SettingsWindow")
     }
 
     func closeSettingsWindow() {
-        if let window = settingsWindow.keyEnumerator().nextObject() as? NSWindow {
+        if let window = settingsWindow {
             window.close()
-            settingsWindow.removeAllObjects()
+            settingsWindow = nil
         }
     }
 
@@ -148,15 +179,14 @@ class WindowManager: NSObject, NSWindowDelegate {
         window.level = .floating
 
         setOnboardingWindow(window, hostingView: hostingView)
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
+        bringWindowToFront(window)
     }
 
     // MARK: - Window Delegate
 
     func windowDidBecomeKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        let isOnboardingWindow = onboardingWindow.object(forKey: window) != nil
+        let isOnboardingWindow = (window === onboardingWindow)
         let preferredLevel: NSWindow.Level
         if window is PopupWindow {
             preferredLevel = .popUpMenu
@@ -172,9 +202,10 @@ class WindowManager: NSObject, NSWindowDelegate {
 
     func windowDidResignKey(_ notification: Notification) {
         guard let window = notification.object as? PopupWindow else { return }
-        // Auto-dismiss popup when it loses focus (e.g., user clicks elsewhere)
-        // Skip if a sheet is being presented (e.g., command editor)
-        if window.attachedSheet == nil {
+        // Auto-dismiss popup when it loses focus (e.g., user clicks elsewhere).
+        // Skip if a sheet is attached OR if dismissal is temporarily suppressed
+        // (e.g., a sheet is about to present but hasn't attached yet).
+        if window.attachedSheet == nil && !isPopupDismissSuppressed {
             dismissPopup()
         }
     }
@@ -184,15 +215,16 @@ class WindowManager: NSObject, NSWindowDelegate {
 
         if let popup = window as? PopupWindow {
             popup.cleanup()
+            clearPopupDismissSuppressionState()
             if popupWindow === popup {
                 popupWindow = nil
             }
         } else if let responseWindow = window as? ResponseWindow {
             removeResponseWindow(responseWindow)
-        } else if onboardingWindow.object(forKey: window) != nil {
-            onboardingWindow.removeObject(forKey: window)
-        } else if settingsWindow.object(forKey: window) != nil {
-            settingsWindow.removeObject(forKey: window)
+        } else if window === onboardingWindow {
+            onboardingWindow = nil
+        } else if window === settingsWindow {
+            settingsWindow = nil
         }
 
         window.delegate = nil
@@ -214,13 +246,11 @@ class WindowManager: NSObject, NSWindowDelegate {
     private func getAllWindows() -> [NSWindow] {
         var windows: [NSWindow] = []
 
-        if let onboardingWindow =
-            onboardingWindow.keyEnumerator().nextObject() as? NSWindow {
+        if let onboardingWindow {
             windows.append(onboardingWindow)
         }
 
-        if let settingsWindow =
-            settingsWindow.keyEnumerator().nextObject() as? NSWindow {
+        if let settingsWindow {
             windows.append(settingsWindow)
         }
 
@@ -233,13 +263,35 @@ class WindowManager: NSObject, NSWindowDelegate {
     }
 
     private func clearAllWindows() {
-        onboardingWindow.removeAllObjects()
-        settingsWindow.removeAllObjects()
+        onboardingWindow = nil
+        settingsWindow = nil
         responseWindows.removeAllObjects()
+        clearPopupDismissSuppressionState()
         popupWindow = nil
     }
 
     deinit {}
+}
+
+extension WindowManager {
+    private func schedulePopupDismissSuppressionFailsafe() {
+        popupDismissSuppressionResetTask?.cancel()
+        popupDismissSuppressionResetTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: popupDismissSuppressionFailsafeDelay)
+            guard !Task.isCancelled else { return }
+            guard !popupDismissSuppressionReasons.isEmpty else { return }
+            logger.warning("Resetting popup dismissal suppression via failsafe")
+            popupDismissSuppressionReasons.removeAll()
+            popupDismissSuppressionResetTask = nil
+        }
+    }
+
+    private func clearPopupDismissSuppressionState() {
+        popupDismissSuppressionResetTask?.cancel()
+        popupDismissSuppressionResetTask = nil
+        popupDismissSuppressionReasons.removeAll()
+    }
 }
 
 extension WindowManager {

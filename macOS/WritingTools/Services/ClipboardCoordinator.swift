@@ -4,6 +4,15 @@ import UniformTypeIdentifiers
 
 private let logger = AppLogger.logger("ClipboardCoordinator")
 
+extension Notification.Name {
+    static let clipboardRestoreSkipped = Notification.Name("clipboardRestoreSkipped")
+}
+
+enum ClipboardNotificationUserInfoKey {
+    static let expectedChangeCount = "expectedChangeCount"
+    static let actualChangeCount = "actualChangeCount"
+}
+
 @MainActor
 final class ClipboardCoordinator {
     static let shared = ClipboardCoordinator()
@@ -32,12 +41,6 @@ final class ClipboardCoordinator {
         let pb = NSPasteboard.general
         let oldChangeCount = pb.changeCount
         let snapshot = pb.createSnapshot()
-        defer {
-            let restored = pb.restore(snapshot: snapshot)
-            if !restored {
-                logger.error("Failed to restore clipboard after capture")
-            }
-        }
 
         triggerCopy()
         try? await Task.sleep(for: minCopyDelay)
@@ -51,12 +54,40 @@ final class ClipboardCoordinator {
 
         guard didChange, pb.changeCount > oldChangeCount else {
             logger.warning("Clipboard did not change after copy trigger")
+            // Restore unconditionally here — clipboard wasn't changed by our copy
+            let restored = pb.restore(snapshot: snapshot)
+            if !restored {
+                logger.error("Failed to restore clipboard after failed capture")
+            }
             return CaptureResult(text: "", attributedText: nil, images: [], didChange: false)
         }
 
         let images = await readImages(from: pb)
         let attributed = pb.readAttributedSelection()
         let text = attributed?.string ?? pb.string(forType: .string) ?? ""
+
+        // Restore clipboard, but only if no external app has modified it since our copy
+        let postCopyChangeCount = pb.changeCount
+        let restoreOutcome = pb.restoreIfUnchanged(
+            snapshot: snapshot,
+            expectedChangeCount: postCopyChangeCount
+        )
+        switch restoreOutcome {
+        case .restored:
+            logger.debug("Clipboard restored after capture")
+        case .skippedExternalChange(let expected, let actual):
+            logger.warning("Clipboard restore skipped after capture due to external change (expected \(expected), actual \(actual))")
+            NotificationCenter.default.post(
+                name: .clipboardRestoreSkipped,
+                object: nil,
+                userInfo: [
+                    ClipboardNotificationUserInfoKey.expectedChangeCount: expected,
+                    ClipboardNotificationUserInfoKey.actualChangeCount: actual,
+                ]
+            )
+        case .failedWrite:
+            logger.error("Failed to restore clipboard after capture")
+        }
 
         return CaptureResult(text: text, attributedText: attributed, images: images, didChange: true)
     }

@@ -9,6 +9,8 @@ private let logger = AppLogger.logger("AppDelegate")
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var iCloudSyncObserver: NSObjectProtocol?
+    private var iCloudQuotaObserver: NSObjectProtocol?
+    private var clipboardRestoreObserver: NSObjectProtocol?
     
     let appState = AppState.shared
 
@@ -59,6 +61,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.configureCloudCommandSync(enabled: AppSettings.shared.enableICloudCommandSync)
             }
         }
+
+        iCloudQuotaObserver = NotificationCenter.default.addObserver(
+            forName: .iCloudCommandSyncQuotaExceeded,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in
+                guard let self else { return }
+                let payloadBytes = note.userInfo?[CloudCommandsSyncUserInfoKey.payloadBytes] as? Int
+                self.showICloudQuotaWarningAlert(payloadBytes: payloadBytes)
+            }
+        }
+
+        clipboardRestoreObserver = NotificationCenter.default.addObserver(
+            forName: .clipboardRestoreSkipped,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in
+                guard let self else { return }
+                let expected = note.userInfo?[ClipboardNotificationUserInfoKey.expectedChangeCount] as? Int ?? -1
+                let actual = note.userInfo?[ClipboardNotificationUserInfoKey.actualChangeCount] as? Int ?? -1
+                self.showClipboardRestoreSkippedWarningAlert(
+                    expectedChangeCount: expected,
+                    actualChangeCount: actual
+                )
+            }
+        }
     }
 
     @objc private func setupCommandShortcuts() {
@@ -78,114 +108,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func executeCommandDirectly(_ command: CommandModel) {
-        guard !appState.isProcessing else {
-            logger.debug("Command ignored because a request is already in progress.")
-            return
-        }
-        appState.activeProvider.cancel()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
 
-        Task { @MainActor in
-            // Store the previous app BEFORE any operations
-            let previousApp = NSWorkspace.shared.frontmostApplication
-
-            guard let capture = await ClipboardCoordinator.shared.captureSelection() else {
-                logger.debug("Clipboard capture skipped because another operation is in progress")
-                return
-            }
-
-            guard capture.didChange else {
-                logger.warning("No new content was copied for command: \(command.name)")
-                return
-            }
-
-            guard !capture.text.isEmpty || !capture.images.isEmpty else {
-                logger.info("No text or images selected for command: \(command.name)")
-                return
-            }
-
-            logger.debug("Captured selection for command \(command.name) (text length: \(capture.text.count), images: \(capture.images.count))")
-
-            // Store data in appState
-            self.appState.selectedImages = capture.images
-            self.appState.selectedAttributedText = capture.attributedText
-            self.appState.selectedText = capture.text
-
-            // Set previous app AFTER we've successfully copied
-            if let previousApp = previousApp {
-                self.appState.previousApplication = previousApp
-            }
-
-            // Process the command with the captured data
-            await self.processCommandWithUI(command)
-        }
-    }
-
-    private func processCommandWithUI(_ command: CommandModel) async {
-        if appState.isProcessing {
-            return
-        }
-
-        appState.isProcessing = true
-
-        defer {
-            appState.isProcessing = false
-        }
-
-        do {
-            let input = try await appState.resolveCommandInput(mode: .textOrImagesWithOCRFallback)
-
-            // Get the appropriate provider for this command (respects per-command overrides)
-            let provider = appState.getProvider(for: command)
-
-            var result = try await provider.processText(
-                systemPrompt: command.prompt,
-                userPrompt: input.userPrompt,
-                images: input.images,
-                streaming: false
-            )
-
-            // Preserve trailing newlines from the original selection
-            // This is important for triple-click selections which include the trailing newline
-            let originalText = appState.selectedText
-            if input.source == .selectedText, originalText.hasSuffix("\n"), !result.hasSuffix("\n") {
-                result += "\n"
-                logger.debug("Added trailing newline to match input")
-            }
-
-            await MainActor.run {
-                let shouldUseResponseWindow = command.useResponseWindow || input.source == .imageOCRFallback
-                if shouldUseResponseWindow {
-                    let window = ResponseWindow(
-                        title: command.name,
-                        content: result,
-                        selectedText: input.source == .selectedText ? appState.selectedText : "Image selection (OCR)",
-                        option: nil,
-                        provider: provider
-                    )
-
-                    WindowManager.shared.addResponseWindow(window)
-                } else {
-                    if command.preserveFormatting, appState.selectedAttributedText != nil {
-                        appState.replaceSelectedTextPreservingAttributes(with: result)
-                    } else {
-                        appState.replaceSelectedText(with: result)
-                    }
-                }
-            }
-        } catch {
-            logger.error("Error processing command \(command.name): \(error.localizedDescription)")
-
-            let alert = NSAlert()
-            alert.messageText = "Command Error"
-            alert.informativeText = "Failed to process '\(command.name)': \(error.localizedDescription)"
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-
-            NSApp.activate()
-            if let keyWindow = NSApp.keyWindow {
-                await alert.beginSheetModal(for: keyWindow)
-            } else {
-                alert.runModal()
+            do {
+                _ = try await CommandExecutionEngine.shared.executeCommand(
+                    command,
+                    source: .hotkey
+                )
+            } catch let error as CommandExecutionEngineError {
+                self.handleCommandExecutionError(error)
+            } catch {
+                logger.error("Error processing command \(command.name): \(error.localizedDescription)")
+                await self.presentCommandErrorAlert(commandName: command.name, error: error)
             }
         }
     }
@@ -203,6 +138,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let iCloudSyncObserver {
             NotificationCenter.default.removeObserver(iCloudSyncObserver)
             self.iCloudSyncObserver = nil
+        }
+        if let iCloudQuotaObserver {
+            NotificationCenter.default.removeObserver(iCloudQuotaObserver)
+            self.iCloudQuotaObserver = nil
+        }
+        if let clipboardRestoreObserver {
+            NotificationCenter.default.removeObserver(clipboardRestoreObserver)
+            self.clipboardRestoreObserver = nil
         }
         CloudCommandsSync.shared.stop()
         WindowManager.shared.cleanupWindows()
@@ -235,8 +178,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @MainActor
     private func showPopup() {
-        appState.activeProvider.cancel()
-
         Task { @MainActor in
             if let frontApp = NSWorkspace.shared.frontmostApplication {
                 self.appState.previousApplication = frontApp
@@ -271,6 +212,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func handleCommandExecutionError(_ error: CommandExecutionEngineError) {
+        switch error {
+        case .captureInProgress:
+            logger.debug("Clipboard capture skipped because another operation is in progress")
+        case .noNewCopiedContent(let commandName):
+            logger.warning("No new content was copied for command: \(commandName)")
+        case .emptySelection(let commandName):
+            logger.info("No text or images selected for command: \(commandName)")
+        case .emptyInstruction:
+            logger.warning("Custom instruction execution failed due to empty instruction")
+        }
+    }
+
+    private func presentCommandErrorAlert(commandName: String, error: Error) async {
+        let alert = NSAlert()
+        alert.messageText = "Command Error"
+        alert.informativeText = "Failed to process '\(commandName)': \(error.localizedDescription)"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+
+        NSApp.activate()
+        if let keyWindow = NSApp.keyWindow {
+            await alert.beginSheetModal(for: keyWindow)
+        } else {
+            alert.runModal()
+        }
+    }
+
     private func closePopupWindow() {
         WindowManager.shared.dismissPopup()
     }
@@ -278,6 +247,56 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func configureCloudCommandSync(enabled: Bool) {
         CloudCommandsSync.shared.setEnabled(enabled)
         logger.info("iCloud command sync \(enabled ? "enabled" : "disabled")")
+    }
+
+    private func showICloudQuotaWarningAlert(payloadBytes: Int?) {
+        let alert = NSAlert()
+        alert.messageText = "iCloud Sync Storage Limit Reached"
+        if let payloadBytes {
+            alert.informativeText =
+                """
+                Writing Tools couldn't sync commands because iCloud key-value storage quota was exceeded (payload size: \(payloadBytes) bytes).
+                Try deleting some commands or shortening large prompts, then sync again.
+                """
+        } else {
+            alert.informativeText =
+                """
+                Writing Tools couldn't sync commands because iCloud key-value storage quota was exceeded.
+                Try deleting some commands or shortening large prompts, then sync again.
+                """
+        }
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+
+        NSApp.activate()
+        if let keyWindow = NSApp.keyWindow {
+            alert.beginSheetModal(for: keyWindow)
+        } else {
+            alert.runModal()
+        }
+    }
+
+    private func showClipboardRestoreSkippedWarningAlert(
+        expectedChangeCount: Int,
+        actualChangeCount: Int
+    ) {
+        let alert = NSAlert()
+        alert.messageText = "Clipboard Was Updated by Another App"
+        alert.informativeText =
+            """
+            Writing Tools captured your selection, but your clipboard changed before it could be restored.
+            Your latest clipboard content was preserved.
+            (Expected change count: \(expectedChangeCount), actual: \(actualChangeCount))
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+
+        NSApp.activate()
+        if let keyWindow = NSApp.keyWindow {
+            alert.beginSheetModal(for: keyWindow)
+        } else {
+            alert.runModal()
+        }
     }
 
 }

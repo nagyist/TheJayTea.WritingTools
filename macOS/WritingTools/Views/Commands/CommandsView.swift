@@ -100,28 +100,15 @@ struct CommandsView: View {
                 },
                 commandManager: commandManager
             )
+            // Force SwiftUI to recreate CommandEditor each time the sheet opens,
+            // preventing stale @State values from a previous session.
+            .id(newCommand.id)
         }
         .sheet(item: $editingCommand) { command in
-            // Make a copy for editing
-            let commandCopy = command
-            let binding = Binding(
-                get: { commandCopy },
-                set: { updatedCommand in
-                    // When saving, update the command in the manager
-                    commandManager.updateCommand(updatedCommand)
-                    editingCommand = nil
-                }
-            )
-            
-            CommandEditor(
-                command: binding,
-                onSave: {
-                    // The binding's setter will handle the update
-                },
-                onCancel: {
-                    editingCommand = nil
-                },
-                commandManager: commandManager
+            EditCommandSheet(
+                original: command,
+                commandManager: commandManager,
+                onDismiss: { editingCommand = nil }
             )
         }
         .alert("Reset Built-in Commands", isPresented: $showingResetAlert) {
@@ -272,6 +259,37 @@ struct CommandRow: View {
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
+    }
+}
+
+/// Wrapper view that owns a mutable @State copy of the command being edited,
+/// so the Binding round-trip works correctly inside CommandEditor.
+private struct EditCommandSheet: View {
+    let original: CommandModel
+    let commandManager: CommandManager
+    let onDismiss: () -> Void
+
+    @State private var commandCopy: CommandModel
+
+    init(original: CommandModel, commandManager: CommandManager, onDismiss: @escaping () -> Void) {
+        self.original = original
+        self.commandManager = commandManager
+        self.onDismiss = onDismiss
+        _commandCopy = State(initialValue: original)
+    }
+
+    var body: some View {
+        CommandEditor(
+            command: $commandCopy,
+            onSave: {
+                commandManager.updateCommand(commandCopy)
+                onDismiss()
+            },
+            onCancel: {
+                onDismiss()
+            },
+            commandManager: commandManager
+        )
     }
 }
 

@@ -60,7 +60,7 @@ class LocalModelProvider {
 
     // Fix #4/#17: Store generation task for proper cancellation
     @ObservationIgnored
-    private var generationTask: Task<Void, Never>?
+    private var generationTask: Task<Void, Error>?
 
     @ObservationIgnored
     private var isCancelled = false
@@ -636,49 +636,64 @@ class LocalModelProvider {
         // Load the model (uses cache if already loaded)
         let modelContainer = try await load()
         
-        // Wrap generation in a Task so cancel() can cancel it cooperatively
+        // Wrap generation in a Task so cancel() can cancel it cooperatively.
+        // Using Task<Void, Error> so thrown errors (including CancellationError)
+        // propagate correctly through `try await task.value`.
         var generationResult = ""
-        let task = Task<Void, Never> { [weak self] in
+        let task = Task<Void, Error> { [weak self] in
             guard let self else { return }
-            do {
-                if isUsingVisionModel && !images.isEmpty {
-                    generationResult = try await processWithVLM(
-                        modelContainer: modelContainer,
-                        systemPrompt: systemPrompt,
-                        userPrompt: userPrompt,
-                        images: images,
-                        streaming: streaming
-                    )
-                } else {
-                    var combinedPrompt = userPrompt
-                    if !images.isEmpty && !isUsingVisionModel {
-                        let ocrText = await OCRManager.shared.extractText(from: images)
-                        if !ocrText.isEmpty {
-                            combinedPrompt += "\n\n[Extracted Text from Image(s)]:\n\(ocrText)"
-                        }
+            if isUsingVisionModel && !images.isEmpty {
+                generationResult = try await processWithVLM(
+                    modelContainer: modelContainer,
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    images: images,
+                    streaming: streaming
+                )
+            } else {
+                var combinedPrompt = userPrompt
+                if !images.isEmpty && !isUsingVisionModel {
+                    let ocrText = try await OCRManager.shared.extractText(from: images)
+                    if !ocrText.isEmpty {
+                        combinedPrompt += "\n\n[Extracted Text from Image(s)]:\n\(ocrText)"
                     }
-                    
-                    generationResult = try await processWithLLM(
-                        modelContainer: modelContainer,
-                        systemPrompt: systemPrompt,
-                        userPrompt: combinedPrompt,
-                        streaming: streaming
-                    )
                 }
-            } catch {
-                logger.error("Error during text generation: \(error.localizedDescription)")
-                lastError = "Generation failed: \(error.localizedDescription)"
-                stat = "Error"
+                
+                generationResult = try await processWithLLM(
+                    modelContainer: modelContainer,
+                    systemPrompt: systemPrompt,
+                    userPrompt: combinedPrompt,
+                    streaming: streaming
+                )
             }
         }
         generationTask = task
-        await task.value
+        
+        do {
+            try await task.value
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            logger.error("Error during text generation: \(error.localizedDescription)")
+            lastError = "Generation failed: \(error.localizedDescription)"
+            stat = "Error"
+            throw error
+        }
         
         if isCancelled || Task.isCancelled {
             throw CancellationError()
         }
-        if generationResult.isEmpty && lastError != nil {
-            throw NSError(domain: "LocalLLM", code: -1, userInfo: [NSLocalizedDescriptionKey: lastError ?? "Generation failed"])
+
+        if generationResult.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let error = NSError(
+                domain: "LocalLLM",
+                code: -6,
+                userInfo: [NSLocalizedDescriptionKey: "Generation produced no output."]
+            )
+            logger.error("Generation completed without output")
+            lastError = "Generation produced no output."
+            stat = "Error"
+            throw error
         }
         return generationResult
     }
@@ -724,7 +739,7 @@ class LocalModelProvider {
         } else {
             var combinedPrompt = userPrompt
             if !images.isEmpty && !isUsingVisionModel {
-                let ocrText = await OCRManager.shared.extractText(from: images)
+                let ocrText = try await OCRManager.shared.extractText(from: images)
                 if !ocrText.isEmpty {
                     combinedPrompt += "\n\n[Extracted Text from Image(s)]:\n\(ocrText)"
                 }
@@ -739,30 +754,30 @@ class LocalModelProvider {
             }
         }
         
-        // Wrap generation in a Task so cancel() can cancel it cooperatively
-        let task = Task<Void, Never> { [weak self] in
+        // Wrap generation in a Task so cancel() can cancel it cooperatively.
+        // Using Task<Void, Error> so thrown errors propagate correctly.
+        let task = Task<Void, Error> { [weak self] in
             guard let self else { return }
-            do {
-                try await generateResponseStreaming(
-                    userInput: userInput,
-                    modelContainer: modelContainer,
-                    onChunk: onChunk
-                )
-            } catch {
-                if !(error is CancellationError) {
-                    logger.error("Streaming generation error: \(error.localizedDescription)")
-                    lastError = "Generation failed: \(error.localizedDescription)"
-                }
-            }
+            try await generateResponseStreaming(
+                userInput: userInput,
+                modelContainer: modelContainer,
+                onChunk: onChunk
+            )
         }
         generationTask = task
-        await task.value
+        
+        do {
+            try await task.value
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            logger.error("Streaming generation error: \(error.localizedDescription)")
+            lastError = "Generation failed: \(error.localizedDescription)"
+            throw error
+        }
         
         if isCancelled || Task.isCancelled {
             throw CancellationError()
-        }
-        if let error = lastError, !error.isEmpty && !error.starts(with: "Generation failed") == false {
-            throw NSError(domain: "LocalLLM", code: -1, userInfo: [NSLocalizedDescriptionKey: error])
         }
     }
 

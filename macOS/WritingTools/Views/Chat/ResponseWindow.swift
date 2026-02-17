@@ -11,14 +11,16 @@ class ResponseWindow: NSWindow {
     content: String,
     selectedText: String,
     option: WritingOption? = nil,
-    provider: any AIProvider
+    provider: any AIProvider,
+    continuationSystemPrompt: String? = nil
   ) {
     let controller = NSHostingController(
       rootView: ResponseView(
         content: content,
         selectedText: selectedText,
         option: option,
-        provider: provider
+        provider: provider,
+        continuationSystemPrompt: continuationSystemPrompt
       )
     )
     self.hostingController = controller
@@ -46,7 +48,8 @@ class ResponseWindow: NSWindow {
     provider: any AIProvider,
     systemPrompt: String,
     userPrompt: String,
-    images: [Data]
+    images: [Data],
+    continuationSystemPrompt: String? = nil
   ) {
     let controller = NSHostingController(
       rootView: ResponseView(
@@ -55,7 +58,8 @@ class ResponseWindow: NSWindow {
         provider: provider,
         systemPrompt: systemPrompt,
         userPrompt: userPrompt,
-        images: images
+        images: images,
+        continuationSystemPrompt: continuationSystemPrompt
       )
     )
     self.hostingController = controller

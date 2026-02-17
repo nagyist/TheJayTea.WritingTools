@@ -25,6 +25,9 @@ struct CustomCommand: Codable, Identifiable, Equatable {
   }
 }
 
+/// Legacy manager retained only for reading existing local custom commands
+/// during migration to the unified CommandManager system.
+/// iCloud sync has been fully removed — CloudCommandsSync handles all syncing.
 @MainActor
 @Observable
 final class CustomCommandsManager {
@@ -32,39 +35,9 @@ final class CustomCommandsManager {
 
   private let saveKey = "custom_commands"
 
-  // iCloud KVS
-  private let iCloudStore = NSUbiquitousKeyValueStore.default
-  private let iCloudDataKey = "icloud.custom_commands.v1.data"
-  private let iCloudMTimeKey = "icloud.custom_commands.v1.mtime"
-  private let localMTimeDefaultsKey = "custom_commands_mtime.v1"
-
-  // Prevents push loops when applying remote changes
-  private var isApplyingCloudChange = false
-
-  private var kvsObserver: NSObjectProtocol?
-
   init() {
-    // Load local first
     loadLocalCommands()
-
-    // Start iCloud sync
-    // Pull from iCloud if newer than local
-    pullFromICloudIfNewer()
-
-    // Observe KVS remote changes
-    kvsObserver = NotificationCenter.default.addObserver(
-      forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
-      object: iCloudStore,
-      queue: .main
-    ) { [weak self] note in
-      Task { @MainActor in
-        self?.handleICloudChange(note)
-      }
-    }
   }
-
-  nonisolated deinit {
-    }
 
   // MARK: - Public API
 
@@ -85,7 +58,6 @@ final class CustomCommandsManager {
     saveCommands()
   }
 
-  // Replace all custom commands at once (kept for your existing usage)
   func replaceCommands(with newCommands: [CustomCommand]) {
     commands = newCommands
     saveCommands()
@@ -102,90 +74,9 @@ final class CustomCommandsManager {
     }
   }
 
-  private func saveLocalCommands() {
+  private func saveCommands() {
     if let encoded = try? JSONEncoder().encode(commands) {
       UserDefaults.standard.set(encoded, forKey: saveKey)
     }
-  }
-
-  // MARK: - iCloud sync
-
-  // Push local -> iCloud
-  private func pushToICloud() {
-    guard !isApplyingCloudChange else { return }
-
-    do {
-      let data = try JSONEncoder().encode(commands)
-      let now = Date()
-
-      iCloudStore.set(data, forKey: iCloudDataKey)
-      iCloudStore.set(now, forKey: iCloudMTimeKey)
-      UserDefaults.standard.set(now, forKey: localMTimeDefaultsKey)
-    } catch {
-      logger.error("CustomCommandsManager: Failed to encode for iCloud: \(error.localizedDescription)")
-    }
-  }
-
-  // Pull iCloud -> local if iCloud is newer
-  private func pullFromICloudIfNewer() {
-    guard let remoteMTime = iCloudStore.object(forKey: iCloudMTimeKey) as? Date
-    else { return }
-
-    let localMTime =
-      UserDefaults.standard.object(forKey: localMTimeDefaultsKey) as? Date
-
-    guard localMTime == nil || remoteMTime > localMTime! else {
-      return
-    }
-
-    guard let data = iCloudStore.data(forKey: iCloudDataKey) else { return }
-
-    do {
-      let remoteCommands =
-        try JSONDecoder().decode([CustomCommand].self, from: data)
-
-      isApplyingCloudChange = true
-      defer { isApplyingCloudChange = false }
-
-      commands = remoteCommands
-      saveLocalCommands()
-      UserDefaults.standard.set(remoteMTime, forKey: localMTimeDefaultsKey)
-    } catch {
-      logger.error("CustomCommandsManager: Failed to decode from iCloud: \(error.localizedDescription)")
-    }
-  }
-
-  private func handleICloudChange(_ note: Notification) {
-    guard
-      let userInfo = note.userInfo,
-      let reason = userInfo[NSUbiquitousKeyValueStoreChangeReasonKey]
-        as? Int
-    else { return }
-
-    guard reason == NSUbiquitousKeyValueStoreServerChange
-      || reason == NSUbiquitousKeyValueStoreInitialSyncChange
-    else {
-      return
-    }
-
-    if
-      let changedKeys = userInfo[NSUbiquitousKeyValueStoreChangedKeysKey]
-        as? [String],
-      changedKeys.contains(where: { $0 == iCloudDataKey || $0 == iCloudMTimeKey })
-    {
-      pullFromICloudIfNewer()
-    }
-  }
-
-  // Save both locally and to iCloud
-  private func saveCommands() {
-    saveLocalCommands()
-
-    // Update local modified time first
-    let now = Date()
-    UserDefaults.standard.set(now, forKey: localMTimeDefaultsKey)
-
-    // Push to iCloud unless we're applying a remote change
-    pushToICloud()
   }
 }

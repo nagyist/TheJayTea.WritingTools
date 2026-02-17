@@ -1136,6 +1136,7 @@
       }
     },
     "Button Name" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -4728,6 +4729,7 @@
       }
     },
     "New Command" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6762,6 +6764,7 @@
       }
     },
     "Show Response in Chat Window" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -7570,6 +7573,7 @@
       }
     },
     "What should your AI do with your selected text? (Prompt)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -7592,6 +7596,7 @@
       }
     },
     "When enabled, responses will appear in a chat window instead of replacing the selected text." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
