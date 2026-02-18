@@ -1,6 +1,6 @@
 import Foundation
 import Vision
-import AppKit
+import ImageIO
 
 final class OCRManager: Sendable {
     static let shared = OCRManager()
@@ -13,9 +13,7 @@ final class OCRManager: Sendable {
         let task = Task.detached(priority: .userInitiated) { () throws -> String in
             try Task.checkCancellation()
 
-            guard let nsImage = NSImage(data: imageData),
-                  let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
-            else { return "" }
+            guard let cgImage = Self.decodeCGImage(from: imageData) else { return "" }
 
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
@@ -49,6 +47,14 @@ final class OCRManager: Sendable {
                 task.cancel()
             }
         )
+    }
+
+    private static func decodeCGImage(from imageData: Data) -> CGImage? {
+        let sourceOptions: CFDictionary = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, sourceOptions) else {
+            return nil
+        }
+        return CGImageSourceCreateImageAtIndex(imageSource, 0, sourceOptions)
     }
 
     // Extracts text from an array of images.

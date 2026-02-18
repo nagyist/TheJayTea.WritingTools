@@ -35,7 +35,6 @@ final class OpenRouterProvider: AIProvider {
     var isProcessing = false
     
     private var config: OpenRouterConfig
-    private var currentTask: Task<String, Error>?
     
     init(config: OpenRouterConfig) {
         self.config = config
@@ -50,94 +49,83 @@ final class OpenRouterProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
-        let config = self.config
-        let systemPrompt = systemPrompt
-        let userPrompt = userPrompt
-        let images = images
-        let streaming = streaming
-
-        let task = Task.detached(priority: .userInitiated) {
-            guard !config.apiKey.isEmpty else {
-                throw NSError(
-                    domain: "OpenRouterAPI",
-                    code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: "API key is missing."]
-                )
-            }
-
-            let openRouterService = AIProxy.openRouterDirectService(unprotectedAPIKey: config.apiKey)
-
-            // Compose messages
-            var messages: [OpenRouterChatCompletionRequestBody.Message] = []
-            if let systemPrompt = systemPrompt, !systemPrompt.isEmpty {
-                messages.append(.system(content: .text(systemPrompt)))
-            }
-
-            if images.isEmpty {
-                messages.append(.user(content: .text(userPrompt)))
-            } else {
-                var parts: [OpenRouterChatCompletionRequestBody.Message.UserContent.Part] = [.text(userPrompt)]
-                for imageData in images {
-                    if let nsImage = NSImage(data: imageData),
-                       let imageURL = AIProxy.encodeImageAsURL(image: nsImage, compressionQuality: 0.8) {
-                        parts.append(.imageURL(imageURL))
-                    }
-                }
-                messages.append(.user(content: .parts(parts)))
-            }
-
-            let modelName = config.model.isEmpty ? OpenRouterConfig.defaultModel : config.model
-
-            let requestBody = OpenRouterChatCompletionRequestBody(
-                messages: messages,
-                models: [modelName],
-                route: .fallback
+        guard !config.apiKey.isEmpty else {
+            throw NSError(
+                domain: "OpenRouterAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "API key is missing."]
             )
-
-            do {
-                if streaming {
-                    var compiledResponse = ""
-                    let stream = try await openRouterService.streamingChatCompletionRequest(body: requestBody)
-                    for try await chunk in stream {
-                        if Task.isCancelled { break }
-                        if let content = chunk.choices.first?.delta.content {
-                            compiledResponse += content
-                        }
-                    }
-                    return compiledResponse
-                } else {
-                    let response = try await openRouterService.chatCompletionRequest(body: requestBody)
-                    return response.choices.first?.message.content ?? ""
-                }
-            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-                logger.error("OpenRouter error (\(statusCode)): \(responseBody)")
-                throw NSError(
-                    domain: "OpenRouterAPI",
-                    code: statusCode,
-                    userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"]
-                )
-            } catch {
-                logger.error("OpenRouter request failed: \(error.localizedDescription)")
-                throw error
-            }
         }
-        currentTask = task
-        return try await task.value
+
+        let openRouterService = AIProxy.openRouterDirectService(unprotectedAPIKey: config.apiKey)
+
+        // Compose messages
+        var messages: [OpenRouterChatCompletionRequestBody.Message] = []
+        if let systemPrompt = systemPrompt, !systemPrompt.isEmpty {
+            messages.append(.system(content: .text(systemPrompt)))
+        }
+
+        if images.isEmpty {
+            messages.append(.user(content: .text(userPrompt)))
+        } else {
+            var parts: [OpenRouterChatCompletionRequestBody.Message.UserContent.Part] = [.text(userPrompt)]
+            for imageData in images {
+                if let nsImage = NSImage(data: imageData),
+                   let imageURL = AIProxy.encodeImageAsURL(image: nsImage, compressionQuality: 0.8) {
+                    parts.append(.imageURL(imageURL))
+                }
+            }
+            messages.append(.user(content: .parts(parts)))
+        }
+
+        let modelName = config.model.isEmpty ? OpenRouterConfig.defaultModel : config.model
+
+        let requestBody = OpenRouterChatCompletionRequestBody(
+            messages: messages,
+            models: [modelName],
+            route: .fallback
+        )
+
+        do {
+            if streaming {
+                var compiledResponse = ""
+                let stream = try await openRouterService.streamingChatCompletionRequest(body: requestBody)
+                for try await chunk in stream {
+                    try Task.checkCancellation()
+                    if let content = chunk.choices.first?.delta.content {
+                        compiledResponse += content
+                    }
+                }
+                return compiledResponse
+            } else {
+                try Task.checkCancellation()
+                let response = try await openRouterService.chatCompletionRequest(body: requestBody)
+                return response.choices.first?.message.content ?? ""
+            }
+        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+            logger.error("OpenRouter error (\(statusCode)): \(responseBody)")
+            throw NSError(
+                domain: "OpenRouterAPI",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"]
+            )
+        } catch {
+            logger.error("OpenRouter request failed: \(error.localizedDescription)")
+            throw error
+        }
     }
     
     func processTextStreaming(
         systemPrompt: String?,
         userPrompt: String,
         images: [Data],
-        onChunk: @escaping @MainActor (String) -> Void
+        onChunk: @escaping @Sendable @MainActor (String) -> Void
     ) async throws {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
         guard !config.apiKey.isEmpty else {
@@ -173,32 +161,25 @@ final class OpenRouterProvider: AIProvider {
             route: .fallback
         )
 
-        let task = Task<String, Error> {
-            do {
-                let stream = try await openRouterService.streamingChatCompletionRequest(body: requestBody)
-                for try await chunk in stream {
-                    if Task.isCancelled { break }
-                    if let content = chunk.choices.first?.delta.content {
-                        onChunk(content)
-                    }
+        do {
+            let stream = try await openRouterService.streamingChatCompletionRequest(body: requestBody)
+            for try await chunk in stream {
+                try Task.checkCancellation()
+                if let content = chunk.choices.first?.delta.content {
+                    onChunk(content)
                 }
-            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-                logger.error("OpenRouter streaming error (\(statusCode)): \(responseBody)")
-                throw NSError(domain: "OpenRouterAPI", code: statusCode,
-                              userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-            } catch {
-                logger.error("OpenRouter streaming failed: \(error.localizedDescription)")
-                throw error
             }
-            return ""
+        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+            logger.error("OpenRouter streaming error (\(statusCode)): \(responseBody)")
+            throw NSError(domain: "OpenRouterAPI", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+        } catch {
+            logger.error("OpenRouter streaming failed: \(error.localizedDescription)")
+            throw error
         }
-        currentTask = task
-        _ = try await task.value
     }
 
     func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
         isProcessing = false
     }
 }

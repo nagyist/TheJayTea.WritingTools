@@ -34,7 +34,6 @@ enum GeminiModel: String, CaseIterable {
 final class GeminiProvider: AIProvider {
     var isProcessing = false
     private var config: GeminiConfig
-    private var currentTask: Task<String, Error>?
     
     init(config: GeminiConfig) {
         self.config = config
@@ -44,78 +43,66 @@ final class GeminiProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
-        let config = self.config
-        let systemPrompt = systemPrompt
-        let userPrompt = userPrompt
-        let images = images
+        guard !config.apiKey.isEmpty else {
+            throw NSError(domain: "GeminiAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "API key is missing."])
+        }
 
-        let task = Task.detached(priority: .userInitiated) {
-            guard !config.apiKey.isEmpty else {
-                throw NSError(domain: "GeminiAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "API key is missing."])
-            }
+        let geminiService = AIProxy.geminiDirectService(unprotectedAPIKey: config.apiKey)
+        let finalPrompt = systemPrompt.map { "\($0)\n\n\(userPrompt)" } ?? userPrompt
 
-            let geminiService = AIProxy.geminiDirectService(unprotectedAPIKey: config.apiKey)
+        var parts: [GeminiGenerateContentRequestBody.Content.Part] = [.text(finalPrompt)]
+        for imageData in images {
+            parts.append(.inline(data: imageData, mimeType: "image/jpeg"))
+        }
 
-            let finalPrompt = systemPrompt.map { "\($0)\n\n\(userPrompt)" } ?? userPrompt
+        let requestBody = GeminiGenerateContentRequestBody(
+            contents: [.init(parts: parts)],
+            safetySettings: [
+                .init(category: .dangerousContent, threshold: .high),
+                .init(category: .harassment, threshold: .high),
+                .init(category: .hateSpeech, threshold: .high),
+                .init(category: .sexuallyExplicit, threshold: .high),
+                .init(category: .civicIntegrity, threshold: .high)
+            ]
+        )
 
-            var parts: [GeminiGenerateContentRequestBody.Content.Part] = [.text(finalPrompt)]
+        do {
+            try Task.checkCancellation()
+            let response = try await geminiService.generateContentRequest(body: requestBody, model: config.modelName, secondsToWait: 60)
 
-            for imageData in images {
-                parts.append(.inline(data: imageData, mimeType: "image/jpeg"))
-            }
-
-            let requestBody = GeminiGenerateContentRequestBody(
-                contents: [.init(parts: parts)],
-                safetySettings: [
-                    .init(category: .dangerousContent, threshold: .high),
-                    .init(category: .harassment, threshold: .high),
-                    .init(category: .hateSpeech, threshold: .high),
-                    .init(category: .sexuallyExplicit, threshold: .high),
-                    .init(category: .civicIntegrity, threshold: .high)
-                ]
-            )
-
-            do {
-                let response = try await geminiService.generateContentRequest(body: requestBody, model: config.modelName, secondsToWait: 60)
-
-                for part in response.candidates?.first?.content?.parts ?? [] {
-                    switch part {
-                    case .text(let text):
-                        return text
-                    case .functionCall(name: let functionName, args: let arguments):
-                        logger.debug("Function call received: \(functionName) with args: \(arguments ?? [:])")
-                    case .inlineData(mimeType: _, base64Data: _):
-                        logger.debug("Image generation response part received")
-                    }
+            for part in response.candidates?.first?.content?.parts ?? [] {
+                switch part {
+                case .text(let text):
+                    return text
+                case .functionCall(name: let functionName, args: let arguments):
+                    logger.debug("Function call received: \(functionName) with args: \(arguments ?? [:])")
+                case .inlineData(mimeType: _, base64Data: _):
+                    logger.debug("Image generation response part received")
                 }
-
-                throw NSError(domain: "GeminiAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "No text content in response."])
-
-            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-                logger.error("AIProxy error (\(statusCode)): \(responseBody)")
-                throw NSError(domain: "GeminiAPI", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-            } catch {
-                logger.error("Gemini request failed: \(error.localizedDescription)")
-                throw error
             }
+
+            throw NSError(domain: "GeminiAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "No text content in response."])
+
+        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+            logger.error("AIProxy error (\(statusCode)): \(responseBody)")
+            throw NSError(domain: "GeminiAPI", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+        } catch {
+            logger.error("Gemini request failed: \(error.localizedDescription)")
+            throw error
         }
-        currentTask = task
-        return try await task.value
     }
     
     func processTextStreaming(
         systemPrompt: String?,
         userPrompt: String,
         images: [Data],
-        onChunk: @escaping @MainActor (String) -> Void
+        onChunk: @escaping @Sendable @MainActor (String) -> Void
     ) async throws {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
         guard !config.apiKey.isEmpty else {
@@ -142,38 +129,31 @@ final class GeminiProvider: AIProvider {
             ]
         )
 
-        let task = Task<String, Error> {
-            do {
-                let stream = try await geminiService.generateStreamingContentRequest(
-                    body: requestBody,
-                    model: config.modelName,
-                    secondsToWait: 60
-                )
-                for try await chunk in stream {
-                    if Task.isCancelled { break }
-                    for part in chunk.candidates?.first?.content?.parts ?? [] {
-                        if case .text(let text) = part {
-                            onChunk(text)
-                        }
+        do {
+            let stream = try await geminiService.generateStreamingContentRequest(
+                body: requestBody,
+                model: config.modelName,
+                secondsToWait: 60
+            )
+            for try await chunk in stream {
+                try Task.checkCancellation()
+                for part in chunk.candidates?.first?.content?.parts ?? [] {
+                    if case .text(let text) = part {
+                        onChunk(text)
                     }
                 }
-            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-                logger.error("Gemini streaming error (\(statusCode)): \(responseBody)")
-                throw NSError(domain: "GeminiAPI", code: statusCode,
-                              userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-            } catch {
-                logger.error("Gemini streaming failed: \(error.localizedDescription)")
-                throw error
             }
-            return ""
+        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+            logger.error("Gemini streaming error (\(statusCode)): \(responseBody)")
+            throw NSError(domain: "GeminiAPI", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+        } catch {
+            logger.error("Gemini streaming failed: \(error.localizedDescription)")
+            throw error
         }
-        currentTask = task
-        _ = try await task.value
     }
 
     func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
         isProcessing = false
     }
 }

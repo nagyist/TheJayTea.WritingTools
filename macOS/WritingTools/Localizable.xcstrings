@@ -1048,6 +1048,7 @@
       }
     },
     "Bliss AI on Google Play" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -3035,6 +3036,7 @@
       }
     },
     "Email Arya" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -3057,6 +3059,7 @@
       }
     },
     "Email Jesai" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -4096,6 +4099,9 @@
       }
     },
     "Leave empty to use the default model for the selected provider. Examples: gpt-5-mini (OpenAI), claude-sonnet-4-5 (Anthropic), gemini-flash-latest (Gemini)" : {
+
+    },
+    "Link unavailable" : {
 
     },
     "Loading %@..." : {
@@ -5930,6 +5936,7 @@
       }
     },
     "ProseKey AI (iOS port)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -7526,6 +7533,7 @@
       }
     },
     "View Releases" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

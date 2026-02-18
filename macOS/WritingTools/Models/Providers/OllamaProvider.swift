@@ -48,7 +48,6 @@ private struct GenerateChunk: Decodable {
 final class OllamaProvider: AIProvider {
     var isProcessing = false
     private var config: OllamaConfig
-    private var currentTask: Task<String, Error>?
 
     init(config: OllamaConfig) {
         self.config = config
@@ -65,192 +64,168 @@ final class OllamaProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
-        let config = self.config
-        let systemPrompt = systemPrompt
-        let userPrompt = userPrompt
-        let images = images
-        let streaming = streaming
         let imageMode = AppSettings.shared.ollamaImageMode
 
-        let task = Task.detached(priority: .userInitiated) {
-            // 1) Build the messages array for the chat endpoint
-            var messages: [[String: Any]] = []
+        // 1) Build the messages array for the chat endpoint
+        var messages: [[String: Any]] = []
 
-            // System message
-            if let system = systemPrompt, !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                messages.append(["role": "system", "content": system])
-            }
+        // System message
+        if let system = systemPrompt, !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            messages.append(["role": "system", "content": system])
+        }
 
-            // User message
-            var userContent = userPrompt
-            var imagesForOllama: [String] = []
+        // User message
+        var userContent = userPrompt
+        var imagesForOllama: [String] = []
 
-            if !images.isEmpty {
-                switch imageMode {
-                case .ocr:
-                    let ocrText = try await OCRManager.shared.extractText(from: images)
-                    if !ocrText.isEmpty {
-                        userContent += "\n\nExtracted Text: \(ocrText)"
-                    }
-                case .ollama:
-                    imagesForOllama = images.map { $0.base64EncodedString() }
+        if !images.isEmpty {
+            switch imageMode {
+            case .ocr:
+                let ocrText = try await OCRManager.shared.extractText(from: images)
+                if !ocrText.isEmpty {
+                    userContent += "\n\nExtracted Text: \(ocrText)"
                 }
-            }
-
-            var userMessage: [String: Any] = ["role": "user", "content": userContent]
-            if !imagesForOllama.isEmpty {
-                userMessage["images"] = imagesForOllama
-            }
-            messages.append(userMessage)
-
-            // 2) Construct URL
-            guard let url = Self.makeEndpointURL(config.baseURL, path: "/chat") else {
-                throw Self.makeClientError("Invalid base URL '\(config.baseURL)'. Expected like http://localhost:11434 or http://localhost:11434/api")
-            }
-
-            // 3) Build request body using the chat messages format
-            var body: [String: Any] = [
-                "model": config.model,
-                "messages": messages,
-                "stream": streaming
-            ]
-            if let keepAlive = config.keepAlive, !keepAlive.isEmpty {
-                body["keep_alive"] = keepAlive
-            }
-
-            let jsonData = try JSONSerialization.data(withJSONObject: body)
-
-            var requestBuilder = URLRequest(url: url)
-            requestBuilder.httpMethod = "POST"
-            requestBuilder.httpBody = jsonData
-            requestBuilder.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            requestBuilder.setValue("application/json", forHTTPHeaderField: "Accept")
-            requestBuilder.timeoutInterval = 60
-            
-            // Capture as immutable value for Swift 6 concurrency
-            let request = requestBuilder
-
-            // 4) Execute request with retry for transient failures
-            return try await withRetry(config: .default) {
-                if streaming {
-                    return try await Self.performStreaming(request)
-                } else {
-                    return try await Self.performOneShot(request)
-                }
+            case .ollama:
+                imagesForOllama = images.map { $0.base64EncodedString() }
             }
         }
-        currentTask = task
-        return try await task.value
+
+        var userMessage: [String: Any] = ["role": "user", "content": userContent]
+        if !imagesForOllama.isEmpty {
+            userMessage["images"] = imagesForOllama
+        }
+        messages.append(userMessage)
+
+        // 2) Construct URL
+        guard let url = Self.makeEndpointURL(config.baseURL, path: "/chat") else {
+            throw Self.makeClientError("Invalid base URL '\(config.baseURL)'. Expected like http://localhost:11434 or http://localhost:11434/api")
+        }
+
+        // 3) Build request body using the chat messages format
+        var body: [String: Any] = [
+            "model": config.model,
+            "messages": messages,
+            "stream": streaming
+        ]
+        if let keepAlive = config.keepAlive, !keepAlive.isEmpty {
+            body["keep_alive"] = keepAlive
+        }
+
+        let jsonData = try JSONSerialization.data(withJSONObject: body)
+
+        var requestBuilder = URLRequest(url: url)
+        requestBuilder.httpMethod = "POST"
+        requestBuilder.httpBody = jsonData
+        requestBuilder.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        requestBuilder.setValue("application/json", forHTTPHeaderField: "Accept")
+        requestBuilder.timeoutInterval = 60
+        
+        // Capture as immutable value for Swift 6 concurrency
+        let request = requestBuilder
+
+        // 4) Execute request with retry for transient failures
+        return try await withRetry(config: .default) {
+            try Task.checkCancellation()
+            if streaming {
+                return try await Self.performStreaming(request)
+            } else {
+                return try await Self.performOneShot(request)
+            }
+        }
     }
 
     func processTextStreaming(
         systemPrompt: String?,
         userPrompt: String,
         images: [Data],
-        onChunk: @escaping @MainActor (String) -> Void
+        onChunk: @escaping @Sendable @MainActor (String) -> Void
     ) async throws {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
-        let config = self.config
         let imageMode = AppSettings.shared.ollamaImageMode
-        let systemPrompt = systemPrompt
-        let userPrompt = userPrompt
-        let images = images
 
-        let task = Task.detached(priority: .userInitiated) {
-            var messages: [[String: Any]] = []
+        var messages: [[String: Any]] = []
 
-            if let system = systemPrompt, !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                messages.append(["role": "system", "content": system])
-            }
-
-            var userContent = userPrompt
-            var imagesForOllama: [String] = []
-            if !images.isEmpty {
-                switch imageMode {
-                case .ocr:
-                    let ocrText = try await OCRManager.shared.extractText(from: images)
-                    if !ocrText.isEmpty {
-                        userContent += "\n\nExtracted Text: \(ocrText)"
-                    }
-                case .ollama:
-                    imagesForOllama = images.map { $0.base64EncodedString() }
-                }
-            }
-
-            var userMessage: [String: Any] = ["role": "user", "content": userContent]
-            if !imagesForOllama.isEmpty {
-                userMessage["images"] = imagesForOllama
-            }
-            messages.append(userMessage)
-
-            guard let url = Self.makeEndpointURL(config.baseURL, path: "/chat") else {
-                throw Self.makeClientError("Invalid base URL '\(config.baseURL)'.")
-            }
-
-            var body: [String: Any] = [
-                "model": config.model,
-                "messages": messages,
-                "stream": true
-            ]
-            if let keepAlive = config.keepAlive, !keepAlive.isEmpty {
-                body["keep_alive"] = keepAlive
-            }
-
-            let jsonData = try JSONSerialization.data(withJSONObject: body)
-
-            var requestBuilder = URLRequest(url: url)
-            requestBuilder.httpMethod = "POST"
-            requestBuilder.httpBody = jsonData
-            requestBuilder.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            requestBuilder.setValue("application/json", forHTTPHeaderField: "Accept")
-            requestBuilder.timeoutInterval = 60
-            let request = requestBuilder
-
-            let (stream, response) = try await URLSession.shared.bytes(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw Self.makeClientError("Invalid response from server.")
-            }
-
-            if http.statusCode != 200 {
-                var data = Data()
-                for try await byte in stream { data.append(byte) }
-                let message = Self.decodeServerError(from: data)
-                throw Self.makeServerError(http.statusCode, message)
-            }
-
-            var aggregate = ""
-            for try await line in stream.lines {
-                if Task.isCancelled { break }
-                guard let data = line.data(using: .utf8) else { continue }
-                if let chunk = try? JSONDecoder().decode(ChatChunk.self, from: data) {
-                    if let t = chunk.message?.content {
-                        aggregate += t
-                        await onChunk(t)
-                    }
-                    if chunk.done == true { break }
-                    if let err = chunk.error, !err.isEmpty {
-                        throw Self.makeServerError(500, err)
-                    }
-                }
-            }
-
-            return aggregate
+        if let system = systemPrompt, !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            messages.append(["role": "system", "content": system])
         }
-        currentTask = task
-        _ = try await task.value
+
+        var userContent = userPrompt
+        var imagesForOllama: [String] = []
+        if !images.isEmpty {
+            switch imageMode {
+            case .ocr:
+                let ocrText = try await OCRManager.shared.extractText(from: images)
+                if !ocrText.isEmpty {
+                    userContent += "\n\nExtracted Text: \(ocrText)"
+                }
+            case .ollama:
+                imagesForOllama = images.map { $0.base64EncodedString() }
+            }
+        }
+
+        var userMessage: [String: Any] = ["role": "user", "content": userContent]
+        if !imagesForOllama.isEmpty {
+            userMessage["images"] = imagesForOllama
+        }
+        messages.append(userMessage)
+
+        guard let url = Self.makeEndpointURL(config.baseURL, path: "/chat") else {
+            throw Self.makeClientError("Invalid base URL '\(config.baseURL)'.")
+        }
+
+        var body: [String: Any] = [
+            "model": config.model,
+            "messages": messages,
+            "stream": true
+        ]
+        if let keepAlive = config.keepAlive, !keepAlive.isEmpty {
+            body["keep_alive"] = keepAlive
+        }
+
+        let jsonData = try JSONSerialization.data(withJSONObject: body)
+
+        var requestBuilder = URLRequest(url: url)
+        requestBuilder.httpMethod = "POST"
+        requestBuilder.httpBody = jsonData
+        requestBuilder.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        requestBuilder.setValue("application/json", forHTTPHeaderField: "Accept")
+        requestBuilder.timeoutInterval = 60
+        let request = requestBuilder
+
+        let (stream, response) = try await URLSession.shared.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw Self.makeClientError("Invalid response from server.")
+        }
+
+        if http.statusCode != 200 {
+            var data = Data()
+            for try await byte in stream { data.append(byte) }
+            let message = Self.decodeServerError(from: data)
+            throw Self.makeServerError(http.statusCode, message)
+        }
+
+        for try await line in stream.lines {
+            try Task.checkCancellation()
+            guard let data = line.data(using: .utf8) else { continue }
+            if let chunk = try? JSONDecoder().decode(ChatChunk.self, from: data) {
+                if let t = chunk.message?.content {
+                    onChunk(t)
+                }
+                if chunk.done == true { break }
+                if let err = chunk.error, !err.isEmpty {
+                    throw Self.makeServerError(500, err)
+                }
+            }
+        }
     }
 
     func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
         isProcessing = false
     }
 

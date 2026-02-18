@@ -64,7 +64,7 @@ struct CommandModel: Codable, Identifiable, Equatable {
         let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
         if let legacyKey = try legacyContainer.decodeIfPresent(String.self, forKey: .customProviderApiKey),
            !legacyKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            KeychainManager.shared.saveCustomProviderApiKey(legacyKey, for: id)
+            KeychainManager.shared.saveCustomProviderApiKeySync(legacyKey, for: id)
         }
     }
 

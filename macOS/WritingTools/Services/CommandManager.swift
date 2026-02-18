@@ -45,7 +45,7 @@ final class CommandManager {
             saveDeletedDefaultIds()
         }
 
-        KeychainManager.shared.deleteCustomProviderApiKey(for: command.id)
+        KeychainManager.shared.deleteCustomProviderApiKeySync(for: command.id)
 
         saveCommands()
         notifyCommandsChanged()
@@ -61,7 +61,7 @@ final class CommandManager {
     func replaceAllCommands(with newCommands: [CommandModel]) {
         let removedIds = Set(commands.map(\.id)).subtracting(newCommands.map(\.id))
         for id in removedIds {
-            KeychainManager.shared.deleteCustomProviderApiKey(for: id)
+            KeychainManager.shared.deleteCustomProviderApiKeySync(for: id)
         }
         commands = newCommands
         saveCommands()

@@ -36,7 +36,8 @@ struct MenuBarMenu: View {
             openSettings()
             // For accessory apps, activate after opening so the window
             // comes to front above other applications.
-            DispatchQueue.main.async {
+            Task { @MainActor in
+                await Task.yield()
                 if let settingsWindow = NSApp.windows.first(where: {
                     $0.identifier?.rawValue == "com_apple_SwiftUI_Settings_window"
                         || $0.title.contains("Settings")

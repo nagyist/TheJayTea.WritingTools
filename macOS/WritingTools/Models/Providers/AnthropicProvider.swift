@@ -33,7 +33,6 @@ final class AnthropicProvider: AIProvider {
     var isProcessing = false
     
     private var config: AnthropicConfig
-    private var currentTask: Task<String, Error>?
     
     init(config: AnthropicConfig) {
         self.config = config
@@ -48,135 +47,122 @@ final class AnthropicProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
-        let config = self.config
-        let systemPrompt = systemPrompt
-        let userPrompt = userPrompt
-        let images = images
-        let streaming = streaming
-
-        let task = Task.detached(priority: .userInitiated) {
-            guard !config.apiKey.isEmpty else {
-                throw NSError(
-                    domain: "AnthropicAPI",
-                    code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: "API key is missing."]
-                )
-            }
-
-            let anthropicService = AIProxy.anthropicDirectService(unprotectedAPIKey: config.apiKey)
-
-            let selectedModel = config.model.isEmpty ? AnthropicConfig.defaultModel : config.model
-
-            var contentBlocks: [AnthropicContentBlockParam] = [
-                .textBlock(.init(text: userPrompt))
-            ]
-
-            for imageData in images {
-                let source = AnthropicImageBlockParamSource.base64(
-                    data: imageData.base64EncodedString(),
-                    mediaType: .jpeg
-                )
-                contentBlocks.append(.imageBlock(.init(source: source)))
-            }
-
-            let messages: [AnthropicMessageParam] = [
-                AnthropicMessageParam(
-                    content: .blocks(contentBlocks),
-                    role: .user
-                )
-            ]
-
-            let requestBody = AnthropicMessageRequestBody(
-                maxTokens: 10000,
-                messages: messages,
-                model: selectedModel,
-                system: systemPrompt.map(AnthropicSystemPrompt.text)
+        guard !config.apiKey.isEmpty else {
+            throw NSError(
+                domain: "AnthropicAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "API key is missing."]
             )
+        }
 
-            do {
-                if streaming {
-                    var compiledResponse = ""
-                    let stream = try await anthropicService.streamingMessageRequest(
-                        body: requestBody,
-                        secondsToWait: 60
-                    )
+        let anthropicService = AIProxy.anthropicDirectService(unprotectedAPIKey: config.apiKey)
+        let selectedModel = config.model.isEmpty ? AnthropicConfig.defaultModel : config.model
 
-                    for try await event in stream {
-                        if Task.isCancelled { break }
-                        guard case let .contentBlockDelta(contentBlockDelta) = event else {
-                            continue
-                        }
+        var contentBlocks: [AnthropicContentBlockParam] = [
+            .textBlock(.init(text: userPrompt))
+        ]
+        for imageData in images {
+            let source = AnthropicImageBlockParamSource.base64(
+                data: imageData.base64EncodedString(),
+                mediaType: .jpeg
+            )
+            contentBlocks.append(.imageBlock(.init(source: source)))
+        }
 
-                        switch contentBlockDelta.delta {
-                        case .textDelta(let textDelta):
-                            compiledResponse += textDelta.text
-                        case .inputJSONDelta, .citationsDelta, .thinkingDelta, .signatureDelta, .futureProof:
-                            continue
-                        }
+        let messages: [AnthropicMessageParam] = [
+            AnthropicMessageParam(
+                content: .blocks(contentBlocks),
+                role: .user
+            )
+        ]
+
+        let requestBody = AnthropicMessageRequestBody(
+            maxTokens: 10000,
+            messages: messages,
+            model: selectedModel,
+            system: systemPrompt.map(AnthropicSystemPrompt.text)
+        )
+
+        do {
+            if streaming {
+                var compiledResponse = ""
+                let stream = try await anthropicService.streamingMessageRequest(
+                    body: requestBody,
+                    secondsToWait: 60
+                )
+
+                for try await event in stream {
+                    try Task.checkCancellation()
+                    guard case let .contentBlockDelta(contentBlockDelta) = event else {
+                        continue
                     }
 
-                    if !compiledResponse.isEmpty {
-                        return compiledResponse
-                    }
-                } else {
-                    let response = try await anthropicService.messageRequest(
-                        body: requestBody,
-                        secondsToWait: 60
-                    )
-                    var compiledResponse = ""
-
-                    for content in response.content {
-                        switch content {
-                        case .textBlock(let textBlock):
-                            compiledResponse += textBlock.text
-                        case .toolUseBlock(let toolUseBlock):
-                            logger.debug("Anthropic tool use: \(toolUseBlock.name) input: \(toolUseBlock.input)")
-                        case .serverToolUseBlock(let serverToolUseBlock):
-                            logger.debug("Anthropic server tool use: \(serverToolUseBlock.name) input: \(serverToolUseBlock.input)")
-                        case .thinkingBlock, .redactedThinkingBlock, .webSearchToolResultBlock, .futureProof:
-                            continue
-                        }
-                    }
-
-                    if !compiledResponse.isEmpty {
-                        return compiledResponse
+                    switch contentBlockDelta.delta {
+                    case .textDelta(let textDelta):
+                        compiledResponse += textDelta.text
+                    case .inputJSONDelta, .citationsDelta, .thinkingDelta, .signatureDelta, .futureProof:
+                        continue
                     }
                 }
 
-                throw NSError(
-                    domain: "AnthropicAPI",
-                    code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: "No text content in response."]
+                if !compiledResponse.isEmpty {
+                    return compiledResponse
+                }
+            } else {
+                try Task.checkCancellation()
+                let response = try await anthropicService.messageRequest(
+                    body: requestBody,
+                    secondsToWait: 60
                 )
-            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-                logger.error("Anthropic error (\(statusCode)): \(responseBody)")
-                throw NSError(
-                    domain: "AnthropicAPI",
-                    code: statusCode,
-                    userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"]
-                )
-            } catch {
-                logger.error("Anthropic request failed: \(error.localizedDescription)")
-                throw error
+                var compiledResponse = ""
+
+                for content in response.content {
+                    switch content {
+                    case .textBlock(let textBlock):
+                        compiledResponse += textBlock.text
+                    case .toolUseBlock(let toolUseBlock):
+                        logger.debug("Anthropic tool use: \(toolUseBlock.name) input: \(toolUseBlock.input)")
+                    case .serverToolUseBlock(let serverToolUseBlock):
+                        logger.debug("Anthropic server tool use: \(serverToolUseBlock.name) input: \(serverToolUseBlock.input)")
+                    case .thinkingBlock, .redactedThinkingBlock, .webSearchToolResultBlock, .futureProof:
+                        continue
+                    }
+                }
+
+                if !compiledResponse.isEmpty {
+                    return compiledResponse
+                }
             }
+
+            throw NSError(
+                domain: "AnthropicAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "No text content in response."]
+            )
+        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+            logger.error("Anthropic error (\(statusCode)): \(responseBody)")
+            throw NSError(
+                domain: "AnthropicAPI",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"]
+            )
+        } catch {
+            logger.error("Anthropic request failed: \(error.localizedDescription)")
+            throw error
         }
-        currentTask = task
-        return try await task.value
     }
     
     func processTextStreaming(
         systemPrompt: String?,
         userPrompt: String,
         images: [Data],
-        onChunk: @escaping @MainActor (String) -> Void
+        onChunk: @escaping @Sendable @MainActor (String) -> Void
     ) async throws {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
         guard !config.apiKey.isEmpty else {
@@ -205,39 +191,32 @@ final class AnthropicProvider: AIProvider {
             system: systemPrompt.map(AnthropicSystemPrompt.text)
         )
 
-        let task = Task<String, Error> {
-            do {
-                let stream = try await anthropicService.streamingMessageRequest(
-                    body: requestBody,
-                    secondsToWait: 60
-                )
-                for try await event in stream {
-                    if Task.isCancelled { break }
-                    guard case let .contentBlockDelta(contentBlockDelta) = event else { continue }
-                    switch contentBlockDelta.delta {
-                    case .textDelta(let textDelta):
-                        onChunk(textDelta.text)
-                    case .inputJSONDelta, .citationsDelta, .thinkingDelta, .signatureDelta, .futureProof:
-                        continue
-                    }
+        do {
+            let stream = try await anthropicService.streamingMessageRequest(
+                body: requestBody,
+                secondsToWait: 60
+            )
+            for try await event in stream {
+                try Task.checkCancellation()
+                guard case let .contentBlockDelta(contentBlockDelta) = event else { continue }
+                switch contentBlockDelta.delta {
+                case .textDelta(let textDelta):
+                    onChunk(textDelta.text)
+                case .inputJSONDelta, .citationsDelta, .thinkingDelta, .signatureDelta, .futureProof:
+                    continue
                 }
-            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-                logger.error("Anthropic streaming error (\(statusCode)): \(responseBody)")
-                throw NSError(domain: "AnthropicAPI", code: statusCode,
-                              userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-            } catch {
-                logger.error("Anthropic streaming failed: \(error.localizedDescription)")
-                throw error
             }
-            return ""
+        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+            logger.error("Anthropic streaming error (\(statusCode)): \(responseBody)")
+            throw NSError(domain: "AnthropicAPI", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+        } catch {
+            logger.error("Anthropic streaming failed: \(error.localizedDescription)")
+            throw error
         }
-        currentTask = task
-        _ = try await task.value
     }
 
     func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
         isProcessing = false
     }
 }

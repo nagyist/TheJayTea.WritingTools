@@ -15,7 +15,7 @@ protocol AIProvider {
         systemPrompt: String?,
         userPrompt: String,
         images: [Data],
-        onChunk: @escaping @MainActor (String) -> Void
+        onChunk: @escaping @Sendable @MainActor (String) -> Void
     ) async throws
 
     // Cancel ongoing requests
@@ -28,7 +28,7 @@ extension AIProvider {
         systemPrompt: String?,
         userPrompt: String,
         images: [Data],
-        onChunk: @escaping @MainActor (String) -> Void
+        onChunk: @escaping @Sendable @MainActor (String) -> Void
     ) async throws {
         // Default: fall back to non-streaming and deliver result all at once
         let result = try await processText(

@@ -26,11 +26,6 @@ struct LoadingBorderModifier: ViewModifier {
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: isLoading)
     }
 }
-// Shared color extension
-extension Color {
-    static let aiPink = Color(red: 255/255, green: 197/255, blue: 211/255)
-}
-
 // LoadingButtonStyle is now moved to CommandButton.swift
 
 // Extension to handle loading state buttons

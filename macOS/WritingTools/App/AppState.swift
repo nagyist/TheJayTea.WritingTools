@@ -90,7 +90,7 @@ final class AppState {
         // Handle custom provider
         if providerName == "custom" {
             logger.debug("AppState.getProvider: Custom provider selected")
-            let apiKey = KeychainManager.shared.retrieveCustomProviderApiKey(for: command.id)
+            let apiKey = KeychainManager.shared.retrieveCustomProviderApiKeySync(for: command.id)
             if let baseURL = command.customProviderBaseURL,
                let apiKey,
                let model = command.customProviderModel {
@@ -137,8 +137,10 @@ final class AppState {
     /// Create or retrieve a cached provider instance with a specific model override
     private func createProviderWithModel(providerName: String, model: String) -> any AIProvider {
         let apiKey = Self.currentAPIKey(for: providerName)
+        let baseURL = Self.currentBaseURL(for: providerName)
         let keyHash = apiKey.isEmpty ? "" : String(SHA256.hash(data: Data(apiKey.utf8)).description.prefix(8))
-        let cacheKey = "\(providerName):\(model):\(keyHash)"
+        let urlHash = baseURL.isEmpty ? "" : String(SHA256.hash(data: Data(baseURL.utf8)).description.prefix(8))
+        let cacheKey = "\(providerName):\(model):\(keyHash):\(urlHash)"
 
         // Return cached provider if available and mark it as recently used.
         if let cached = modelOverrideProviderCache[cacheKey] {
@@ -240,6 +242,17 @@ final class AppState {
         case "mistral":   return s.mistralApiKey
         case "openrouter": return s.openRouterApiKey
         default:          return ""
+        }
+    }
+
+    /// Returns the current base URL for providers that support custom endpoints (used for cache key hashing).
+    private static func currentBaseURL(for providerName: String) -> String {
+        let s = AppSettings.shared
+        switch providerName {
+        case "openai":  return s.openAIBaseURL
+        case "mistral": return s.mistralBaseURL
+        case "ollama":  return s.ollamaBaseURL
+        default:        return ""
         }
     }
 
@@ -549,71 +562,96 @@ final class AppState {
     private func activateWindowAndPaste(for app: NSRunningApplication, clipboardSnapshot: ClipboardSnapshot, expectedChangeCount: Int) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let deadline = Date().addingTimeInterval(2.0)
-            var pollInterval: Duration = .milliseconds(10)
-            let maxPollInterval: Duration = .milliseconds(80)
 
-            while true {
-                if Task.isCancelled {
-                    logger.debug("Paste operation cancelled before activation")
-                    return
-                }
+            // If the target app is already frontmost, paste immediately.
+            // Otherwise, wait for NSWorkspace activation notification with a timeout.
+            let alreadyFrontmost =
+                NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.bundleIdentifier
 
-                let isFrontmost =
-                    NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.bundleIdentifier
-
-                if !isFrontmost && Date() >= deadline {
-                    // Timeout reached but target app is NOT frontmost — do NOT paste
-                    // into the wrong app. Leave the text on the clipboard so the user
-                    // can paste manually.
+            if !alreadyFrontmost {
+                let activated = await self.waitForAppActivation(app, timeout: .seconds(2))
+                if !activated {
                     logger.warning("Timeout reached without target app becoming frontmost. Text left on clipboard for manual paste.")
                     self.showPasteTimeoutAlert(targetApp: app)
                     return  // Don't restore clipboard — user needs text for manual paste
                 }
+            }
 
-                if isFrontmost {
-                    // Perform the paste
-                    self.simulatePaste()
+            // Perform the paste
+            self.simulatePaste()
 
-                    // Wait for the paste to complete before restoring the clipboard.
-                    // 250ms accommodates slower apps (e.g. Electron, heavy IDEs).
-                    do {
-                        try await Task.sleep(for: .milliseconds(250))
-                    } catch {
-                        logger.debug("Paste delay interrupted: \(error.localizedDescription)")
-                    }
+            // Wait for the paste to complete before restoring the clipboard.
+            // 250ms accommodates slower apps (e.g. Electron, heavy IDEs).
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                logger.debug("Paste delay interrupted: \(error.localizedDescription)")
+            }
 
-                    // Restore the original clipboard content, but only if no external
-                    // app has modified the clipboard since we wrote our text to it
-                    let restoreOutcome = NSPasteboard.general.restoreIfUnchanged(
-                        snapshot: clipboardSnapshot,
-                        expectedChangeCount: expectedChangeCount
-                    )
-                    switch restoreOutcome {
-                    case .restored:
-                        logger.debug("Clipboard restored after paste")
-                    case .skippedExternalChange(let expected, let actual):
-                        logger.warning("Clipboard restore skipped after paste due to external change (expected \(expected), actual \(actual))")
-                        self.showClipboardRestoreSkippedAlert(
-                            targetApp: app,
-                            expectedChangeCount: expected,
-                            actualChangeCount: actual
-                        )
-                    case .failedWrite:
-                        logger.error("Clipboard restore failed after paste")
-                        self.showClipboardRestoreFailedAlert(targetApp: app)
-                    }
-                    break
-                }
+            // Restore the original clipboard content, but only if no external
+            // app has modified the clipboard since we wrote our text to it
+            let restoreOutcome = NSPasteboard.general.restoreIfUnchanged(
+                snapshot: clipboardSnapshot,
+                expectedChangeCount: expectedChangeCount
+            )
+            switch restoreOutcome {
+            case .restored:
+                logger.debug("Clipboard restored after paste")
+            case .skippedExternalChange(let expected, let actual):
+                logger.warning("Clipboard restore skipped after paste due to external change (expected \(expected), actual \(actual))")
+                self.showClipboardRestoreSkippedAlert(
+                    targetApp: app,
+                    expectedChangeCount: expected,
+                    actualChangeCount: actual
+                )
+            case .failedWrite:
+                logger.error("Clipboard restore failed after paste")
+                self.showClipboardRestoreFailedAlert(targetApp: app)
+            }
+        }
+    }
 
-                do {
-                    try await Task.sleep(for: pollInterval)
-                    // Exponential backoff to reduce polling pressure
-                    pollInterval = min(pollInterval * 2, maxPollInterval)
-                } catch {
-                    logger.debug("Paste activation wait interrupted: \(error.localizedDescription)")
+    /// Waits for the given application to become frontmost using
+    /// `NSWorkspace.didActivateApplicationNotification`, with a timeout fallback.
+    /// Returns `true` if the app became frontmost, `false` on timeout.
+    private func waitForAppActivation(_ app: NSRunningApplication, timeout: Duration) async -> Bool {
+        // Check immediately in case it already activated between our yield and this call
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.bundleIdentifier {
+            return true
+        }
+
+        // Both closures below run on the main queue/actor, so shared
+        // mutable state is safe. Use a small class box to satisfy Sendable.
+        final class ActivationState: @unchecked Sendable {
+            var observer: NSObjectProtocol?
+            var timeoutTask: Task<Void, Never>?
+            var resumed = false
+        }
+        let state = ActivationState()
+
+        return await withCheckedContinuation { continuation in
+            state.observer = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { note in
+                guard let activatedApp = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      activatedApp.bundleIdentifier == app.bundleIdentifier else {
                     return
                 }
+                guard !state.resumed else { return }
+                state.resumed = true
+                state.timeoutTask?.cancel()
+                if let obs = state.observer { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
+                continuation.resume(returning: true)
+            }
+
+            state.timeoutTask = Task { @MainActor in
+                try? await Task.sleep(for: timeout)
+                guard !state.resumed else { return }
+                state.resumed = true
+                if let obs = state.observer { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
+                continuation.resume(returning: false)
             }
         }
     }

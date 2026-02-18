@@ -18,6 +18,7 @@ struct SettingsView: View {
     @State private var showingCommandsManager = false
     @State private var hostingWindow: NSWindow?
     @State private var pendingProviderApplyTask: Task<Void, Never>?
+    private let providerApplyDebounce: Duration = .milliseconds(800)
 
     // Validation alert state
     @State private var showingValidationAlert = false
@@ -95,8 +96,11 @@ struct SettingsView: View {
                                       forKey: "lastSettingsTab")
             updateWindowTitle(to: newValue)
         }
-        .onChange(of: providerApplySignature) { _, _ in
+        .onChange(of: providerRuntimeApplySignature) { _, _ in
             scheduleProviderApply()
+        }
+        .onChange(of: providerCredentialSignature) { _, _ in
+            pendingProviderApplyTask?.cancel()
         }
         .onDisappear {
             pendingProviderApplyTask?.cancel()
@@ -185,36 +189,41 @@ struct SettingsView: View {
     private func scheduleProviderApply() {
         pendingProviderApplyTask?.cancel()
         pendingProviderApplyTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: providerApplyDebounce)
             guard !Task.isCancelled else { return }
             appState.saveCurrentProviderSettings()
             needsSaving = false
         }
     }
 
-    private var providerApplySignature: String {
+    private var providerRuntimeApplySignature: String {
         [
             settings.currentProvider,
-            settings.geminiApiKey,
             settings.geminiModel.rawValue,
             settings.geminiCustomModel,
-            settings.openAIApiKey,
             settings.openAIBaseURL,
             settings.openAIModel,
             settings.openAIOrganization ?? "",
             settings.openAIProject ?? "",
-            settings.mistralApiKey,
             settings.mistralBaseURL,
             settings.mistralModel,
-            settings.anthropicApiKey,
             settings.anthropicModel,
-            settings.openRouterApiKey,
             settings.openRouterModel,
             settings.openRouterCustomModel,
             settings.ollamaBaseURL,
             settings.ollamaModel,
             settings.ollamaKeepAlive,
             settings.ollamaImageMode.rawValue,
+        ].joined(separator: "|")
+    }
+
+    private var providerCredentialSignature: String {
+        [
+            settings.geminiApiKey,
+            settings.openAIApiKey,
+            settings.mistralApiKey,
+            settings.anthropicApiKey,
+            settings.openRouterApiKey,
         ].joined(separator: "|")
     }
 
@@ -304,6 +313,7 @@ private final class WindowAccessorView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        guard window != nil else { return }
         callback(window)
     }
 }

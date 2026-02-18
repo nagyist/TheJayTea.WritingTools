@@ -11,6 +11,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var iCloudSyncObserver: NSObjectProtocol?
     private var iCloudQuotaObserver: NSObjectProtocol?
     private var clipboardRestoreObserver: NSObjectProtocol?
+    private var commandShortcutNamesById: [UUID: KeyboardShortcuts.Name] = [:]
     
     let appState = AppState.shared
 
@@ -70,7 +71,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { @MainActor in
                 guard let self else { return }
                 let payloadBytes = note.userInfo?[CloudCommandsSyncUserInfoKey.payloadBytes] as? Int
-                self.showICloudQuotaWarningAlert(payloadBytes: payloadBytes)
+                let totalBytes = note.userInfo?[CloudCommandsSyncUserInfoKey.totalBytes] as? Int
+                let reason = note.userInfo?[CloudCommandsSyncUserInfoKey.reason] as? String
+                self.showICloudQuotaWarningAlert(
+                    payloadBytes: payloadBytes,
+                    totalBytes: totalBytes,
+                    reason: reason
+                )
             }
         }
 
@@ -92,18 +99,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func setupCommandShortcuts() {
-        for command in appState.commandManager.commands.filter({ !$0.hasShortcut }) {
-            KeyboardShortcuts.reset(.commandShortcut(for: command.id))
+        let commandsWithShortcuts = appState.commandManager.commands.filter(\.hasShortcut)
+        let desiredIds = Set(commandsWithShortcuts.map(\.id))
+        let registeredIds = Set(commandShortcutNamesById.keys)
+
+        guard desiredIds != registeredIds else { return }
+
+        let removedIds = registeredIds.subtracting(desiredIds)
+        for id in removedIds {
+            guard let shortcutName = commandShortcutNamesById[id] else { continue }
+            KeyboardShortcuts.removeHandler(for: shortcutName)
+            KeyboardShortcuts.reset(shortcutName)
+            commandShortcutNamesById[id] = nil
         }
 
-        for command in appState.commandManager.commands.filter({ $0.hasShortcut }) {
-            KeyboardShortcuts.onKeyUp(for: .commandShortcut(for: command.id)) {
-                [weak self] in
-                guard let self = self, !AppSettings.shared.hotkeysPaused else {
+        let addedIds = desiredIds.subtracting(registeredIds)
+        for commandId in addedIds {
+            let shortcutName = KeyboardShortcuts.Name.commandShortcut(for: commandId)
+            KeyboardShortcuts.removeHandler(for: shortcutName)
+            KeyboardShortcuts.onKeyUp(for: shortcutName) { [weak self] in
+                guard let self, !AppSettings.shared.hotkeysPaused else { return }
+                guard let command = self.appState.commandManager.commands.first(where: { $0.id == commandId }) else {
+                    logger.warning("Shortcut fired for missing command ID: \(commandId.uuidString)")
                     return
                 }
                 self.executeCommandDirectly(command)
             }
+            commandShortcutNamesById[commandId] = shortcutName
         }
     }
 
@@ -130,6 +152,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Flush any debounced keychain writes before exit
+        AppSettings.shared.flushPendingKeychainWrites()
+
+        // Flush cloud sync: cancel debounce, push immediately, and synchronize
+        CloudCommandsSync.shared.flushAndSynchronize()
+
         NotificationCenter.default.removeObserver(
             self,
             name: NSNotification.Name("CommandsChanged"),
@@ -147,6 +175,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NotificationCenter.default.removeObserver(clipboardRestoreObserver)
             self.clipboardRestoreObserver = nil
         }
+        for shortcutName in commandShortcutNamesById.values {
+            KeyboardShortcuts.removeHandler(for: shortcutName)
+        }
+        commandShortcutNamesById.removeAll()
         CloudCommandsSync.shared.stop()
         WindowManager.shared.cleanupWindows()
     }
@@ -249,16 +281,39 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         logger.info("iCloud command sync \(enabled ? "enabled" : "disabled")")
     }
 
-    private func showICloudQuotaWarningAlert(payloadBytes: Int?) {
+    private func showICloudQuotaWarningAlert(payloadBytes: Int?, totalBytes: Int?, reason: String?) {
         let alert = NSAlert()
         alert.messageText = "iCloud Sync Storage Limit Reached"
-        if let payloadBytes {
-            alert.informativeText =
-                """
-                Writing Tools couldn't sync commands because iCloud key-value storage quota was exceeded (payload size: \(payloadBytes) bytes).
-                Try deleting some commands or shortening large prompts, then sync again.
-                """
-        } else {
+        switch reason {
+        case "preflight_payload_too_large":
+            if let payloadBytes {
+                alert.informativeText =
+                    """
+                    Writing Tools couldn't sync commands because the command payload is too large (\(payloadBytes) bytes).
+                    Try deleting some commands or shortening large prompts, then sync again.
+                    """
+            } else {
+                alert.informativeText =
+                    """
+                    Writing Tools couldn't sync commands because the command payload is too large.
+                    Try deleting some commands or shortening large prompts, then sync again.
+                    """
+            }
+        case "preflight_total_store_too_large":
+            if let totalBytes {
+                alert.informativeText =
+                    """
+                    Writing Tools couldn't sync commands because estimated iCloud key-value storage usage reached \(totalBytes) bytes.
+                    Try deleting some commands, shortening large prompts, or clearing old deleted-command history.
+                    """
+            } else {
+                alert.informativeText =
+                    """
+                    Writing Tools couldn't sync commands because iCloud key-value storage quota was exceeded.
+                    Try deleting some commands, shortening large prompts, or clearing old deleted-command history.
+                    """
+            }
+        default:
             alert.informativeText =
                 """
                 Writing Tools couldn't sync commands because iCloud key-value storage quota was exceeded.

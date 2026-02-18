@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import Security
 
 private let logger = AppLogger.logger("KeychainMigrationManager")
 
@@ -19,16 +18,23 @@ class KeychainMigrationManager {
     // Migration tracking
     private let migrationCompleteKey = "keychain_migration_complete_v1"
     private let migrationLogKey = "keychain_migration_log"
+
+    enum MigrationResult: Equatable {
+        case skipped
+        case success(migratedKeys: [String])
+        case failed(migratedKeys: [String], failedKeys: [String])
+    }
     
     private init() {}
     
     // MARK: - Public API
     
-    func migrateIfNeeded() {
+    @discardableResult
+    func migrateIfNeeded() -> MigrationResult {
         // Skip if already migrated
         guard !hasMigrationCompleted() else {
             logger.info("Keychain migration already completed")
-            return
+            return .skipped
         }
         
         logger.info("Starting Keychain migration for API keys...")
@@ -45,31 +51,43 @@ class KeychainMigrationManager {
         var failedKeys: [String] = []
         
         for (oldKey, newKey) in keysToMigrate {
-            if let value = userDefaults.string(forKey: oldKey), !value.isEmpty {
-                do {
-                    try keychain.save(value, forKey: newKey)
-                    migratedKeys.append(oldKey)
-                    logger.debug("Migrated: \(oldKey)")
-                    
-                    // Remove from UserDefaults after successful migration
-                    userDefaults.removeObject(forKey: oldKey)
-                } catch {
-                    failedKeys.append(oldKey)
-                    logger.error("Failed to migrate \(oldKey): \(error.localizedDescription)")
-                }
+            guard let value = userDefaults.string(forKey: oldKey), !value.isEmpty else {
+                continue
             }
+
+            // Use nonisolated bootstrap save/read because migration runs at startup
+            // before async contexts are available.
+            let saveSucceeded = keychain.bootstrapSave(value, forKey: newKey, synchronizable: true)
+            guard saveSucceeded else {
+                failedKeys.append(oldKey)
+                logger.error("Failed to migrate \(oldKey): keychain write failed")
+                continue
+            }
+
+            let readBack = keychain.bootstrapRetrieve(forKey: newKey, scope: .any)
+            guard readBack == value else {
+                failedKeys.append(oldKey)
+                logger.error("Failed to migrate \(oldKey): keychain read-back verification failed")
+                continue
+            }
+
+            migratedKeys.append(oldKey)
+            logger.debug("Migrated: \(oldKey)")
+            // Remove from UserDefaults only after verified migration
+            userDefaults.removeObject(forKey: oldKey)
         }
         
         // Log migration results
         logMigration(migratedKeys: migratedKeys, failedKeys: failedKeys)
-        
-        // Only mark migration as complete if all keys succeeded.
-        // Failed keys remain in UserDefaults so the next launch retries them.
+
         if failedKeys.isEmpty {
             markMigrationComplete()
+            logger.info("Keychain migration complete. Migrated: \(migratedKeys.count)")
+            return .success(migratedKeys: migratedKeys)
         }
-        
-        logger.info("Keychain migration complete. Migrated: \(migratedKeys.count), Failed: \(failedKeys.count)")
+
+        logger.error("Keychain migration incomplete. Migrated: \(migratedKeys.count), Failed: \(failedKeys.count)")
+        return .failed(migratedKeys: migratedKeys, failedKeys: failedKeys)
     }
     
     // MARK: - Private Methods

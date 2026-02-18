@@ -54,7 +54,7 @@ struct CommandEditor: View {
 
         // Initialize custom provider configuration
         _customProviderBaseURL = State(initialValue: command.wrappedValue.customProviderBaseURL ?? "")
-        _customProviderApiKey = State(initialValue: KeychainManager.shared.retrieveCustomProviderApiKey(for: command.wrappedValue.id) ?? "")
+        _customProviderApiKey = State(initialValue: KeychainManager.shared.retrieveCustomProviderApiKeySync(for: command.wrappedValue.id) ?? "")
         _customProviderModel = State(initialValue: command.wrappedValue.customProviderModel ?? "")
     }
 
@@ -343,20 +343,20 @@ struct CommandEditor: View {
                 updatedCommand.modelOverride = nil
 
                 logger.debug("CommandEditor: Saving custom provider - baseURL=\(trimmedBaseURL), apiKey=\(trimmedApiKey.isEmpty ? "empty" : "set"), model=\(trimmedModel)")
-                KeychainManager.shared.saveCustomProviderApiKey(trimmedApiKey, for: updatedCommand.id)
+                KeychainManager.shared.saveCustomProviderApiKeySync(trimmedApiKey, for: updatedCommand.id)
             } else {
                 // Save model override for standard providers
                 updatedCommand.modelOverride = customModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : customModel.trimmingCharacters(in: .whitespacesAndNewlines)
                 updatedCommand.customProviderBaseURL = nil
                 updatedCommand.customProviderModel = nil
-                KeychainManager.shared.deleteCustomProviderApiKey(for: updatedCommand.id)
+                KeychainManager.shared.deleteCustomProviderApiKeySync(for: updatedCommand.id)
             }
         } else {
             updatedCommand.providerOverride = nil
             updatedCommand.modelOverride = nil
             updatedCommand.customProviderBaseURL = nil
             updatedCommand.customProviderModel = nil
-            KeychainManager.shared.deleteCustomProviderApiKey(for: updatedCommand.id)
+            KeychainManager.shared.deleteCustomProviderApiKeySync(for: updatedCommand.id)
         }
 
         command = updatedCommand

@@ -1,11 +1,11 @@
 import SwiftUI
 
 private enum AboutURLs {
-    static let emailJesai = URL(string: "mailto:jesaitarun@gmail.com")!
-    static let blissAI = URL(string: "https://play.google.com/store/apps/details?id=com.jesai.blissai")!
-    static let emailArya = URL(string: "mailto:developer@aryamirsepasi.com")!
-    static let proseKey = URL(string: "https://apps.apple.com/us/app/prosekey-ai/id6741180175")!
-    static let releases = URL(string: "https://github.com/theJayTea/WritingTools/releases")!
+    static let emailJesai = URL(string: "mailto:jesaitarun@gmail.com")
+    static let blissAI = URL(string: "https://play.google.com/store/apps/details?id=com.jesai.blissai")
+    static let emailArya = URL(string: "mailto:developer@aryamirsepasi.com")
+    static let proseKey = URL(string: "https://apps.apple.com/us/app/prosekey-ai/id6741180175")
+    static let releases = URL(string: "https://github.com/theJayTea/WritingTools/releases")
 }
 
 struct AboutView: View {
@@ -21,6 +21,18 @@ struct AboutView: View {
         }
 
         return shortVersion ?? buildVersion ?? "Unknown"
+    }
+
+    @ViewBuilder
+    private func safeLink(_ title: String, destination: URL?) -> some View {
+        if let destination {
+            Link(title, destination: destination)
+                .buttonStyle(.link)
+        } else {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .help("Link unavailable")
+        }
     }
     
     var body: some View {
@@ -50,8 +62,8 @@ struct AboutView: View {
                         Text("Created with care by Jesai, a high school student.")
                             .bold()
                         HStack(spacing: 12) {
-                            Link("Email Jesai", destination: AboutURLs.emailJesai)
-                            Link("Bliss AI on Google Play", destination: AboutURLs.blissAI)
+                            safeLink("Email Jesai", destination: AboutURLs.emailJesai)
+                            safeLink("Bliss AI on Google Play", destination: AboutURLs.blissAI)
                         }
                     }
 
@@ -61,8 +73,8 @@ struct AboutView: View {
                         Text("macOS version by Arya Mirsepasi")
                             .bold()
                         HStack(spacing: 12) {
-                            Link("Email Arya", destination: AboutURLs.emailArya)
-                            Link("ProseKey AI (iOS port)", destination: AboutURLs.proseKey)
+                            safeLink("Email Arya", destination: AboutURLs.emailArya)
+                            safeLink("ProseKey AI (iOS port)", destination: AboutURLs.proseKey)
                         }
                     }
                 }
@@ -113,8 +125,7 @@ struct AboutView: View {
                         }
                         .buttonStyle(.borderedProminent)
 
-                        Link("View Releases", destination: AboutURLs.releases)
-                            .buttonStyle(.link)
+                        safeLink("View Releases", destination: AboutURLs.releases)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }

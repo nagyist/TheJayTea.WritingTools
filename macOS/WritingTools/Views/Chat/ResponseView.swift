@@ -527,6 +527,7 @@ final class ResponseViewModel {
         initialStreamingTask = nil
         followUpStreamingTask = nil
         fontSizeSaveTask = nil
+        provider.cancel()
         isProcessing = false
     }
 

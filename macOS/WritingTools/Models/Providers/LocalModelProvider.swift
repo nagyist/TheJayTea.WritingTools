@@ -82,9 +82,14 @@ class LocalModelProvider {
     
     // Where we keep MLX models
     private static let modelsRoot: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let base =
+            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
         return base.appendingPathComponent("WritingTools/MLXModels", isDirectory: true)
     }()
+    private static let vlmTempImagePrefix = "writingtools-vlm-"
+    private static let staleTempFileMaxAge: TimeInterval = 24 * 60 * 60
 
     @ObservationIgnored
     private lazy var hub: HubApi = {
@@ -193,6 +198,42 @@ class LocalModelProvider {
             modelInfo = "Local LLM is only available on Apple Silicon devices"
             loadState = .error("Platform not supported")
         }
+
+        // Sweep stale VLM temp image files left by previous sessions
+        // (e.g. after a crash or force-quit before the defer cleanup ran).
+        Self.cleanupStaleTempFiles()
+    }
+
+    /// Removes leftover VLM temp image files from the system temp directory.
+    /// Only removes app-owned files with the expected prefix and UUID suffix.
+    private static func cleanupStaleTempFiles() {
+        let tempDir = FileManager.default.temporaryDirectory
+        let fm = FileManager.default
+        let extensions: Set<String> = ["png", "jpg", "tiff"]
+        let now = Date()
+        guard let contents = try? fm.contentsOfDirectory(
+            at: tempDir,
+            includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
+            options: .skipsHiddenFiles
+        ) else { return }
+
+        for url in contents {
+            guard extensions.contains(url.pathExtension.lowercased()) else { continue }
+            // Only remove files that follow our ownership prefix + UUID contract.
+            let stem = url.deletingPathExtension().lastPathComponent
+            guard stem.hasPrefix(vlmTempImagePrefix) else { continue }
+            let uuidPortion = String(stem.dropFirst(vlmTempImagePrefix.count))
+            guard UUID(uuidString: uuidPortion) != nil else { continue }
+            let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+            let creationDate = values?.creationDate ?? values?.contentModificationDate ?? now
+            guard now.timeIntervalSince(creationDate) >= staleTempFileMaxAge else { continue }
+            try? fm.removeItem(at: url)
+        }
+    }
+
+    private static func makeManagedTempImageURL(pathExtension: String) -> URL {
+        let fileName = vlmTempImagePrefix + UUID().uuidString + "." + pathExtension
+        return FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
     }
 
     private func observeSettings() {
@@ -292,6 +333,15 @@ class LocalModelProvider {
             lastError = nil
         }
     }
+
+    private func canStartDownload(from state: LoadState) -> Bool {
+        switch state {
+        case .needsDownload, .idle, .checking, .error(_):
+            return true
+        default:
+            return false
+        }
+    }
     
     func startDownload() {
         guard isPlatformSupported else {
@@ -308,7 +358,7 @@ class LocalModelProvider {
             return
         }
         // Prevent starting if already downloaded/loading/loaded
-        guard loadState == .needsDownload || loadState == .error("Download failed") || loadState == .idle || loadState == .checking else {
+        guard canStartDownload(from: loadState) else {
             logger.warning("startDownload: Cannot start download from state \(String(describing: self.loadState)).")
             // Update info based on state
             switch loadState {
@@ -407,7 +457,10 @@ class LocalModelProvider {
         // Remove any old cached copy (previous defaultHubApi downloads stored in ~/Library/Caches)
         guard let config = selectedModelConfiguration,
               let repoID = repoID(from: config) else { return }
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let caches =
+            FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Caches", isDirectory: true)
         let repoName = repoID.split(separator: "/").last.map(String.init) ?? ""
         guard !repoName.isEmpty else { return }
         if let contents = try? FileManager.default.contentsOfDirectory(at: caches, includingPropertiesForKeys: nil) {
@@ -458,9 +511,10 @@ class LocalModelProvider {
             
         } catch {
             logger.error("Failed to delete model \(modelType.displayName): \(error.localizedDescription)")
-            lastError = "Failed to delete \(modelType.displayName): \(error.localizedDescription)"
-            modelInfo = lastError!
-            loadState = .error(lastError!)
+            let message = "Failed to delete \(modelType.displayName): \(error.localizedDescription)"
+            lastError = message
+            modelInfo = message
+            loadState = .error(message)
             throw error
         }
     }
@@ -548,17 +602,19 @@ class LocalModelProvider {
                 
                 if wasExplicitlyCancelled || isCancellationError {
                     logger.debug("load: Download cancelled.")
-                    lastError = "Download cancelled." // Set user-facing error
-                    modelInfo = lastError!
+                    let message = "Download cancelled."
+                    lastError = message
+                    modelInfo = message
                     // State should revert correctly after checkModelStatus
                 } else {
                     // Handle other errors (network, disk space, etc.)
                     let nsError = error as NSError
-                    lastError = nsError.domain == NSURLErrorDomain
+                    let message = nsError.domain == NSURLErrorDomain
                     ? "Network error downloading \(modelType.displayName): \(nsError.localizedDescription)"
                     : "Error downloading \(modelType.displayName): \(nsError.localizedDescription)"
-                    modelInfo = lastError ?? "Unknown download error"
-                    loadState = .error(lastError!) // Set error state immediately
+                    lastError = message
+                    modelInfo = message
+                    loadState = .error(message) // Set error state immediately
                     logger.error("load: State set to .error")
                 }
                 
@@ -594,9 +650,10 @@ class LocalModelProvider {
                 return modelContainer
             } catch let error as NSError {
                 logger.error("load: Error during loadContainer (from disk): \(error.localizedDescription)")
-                lastError = "Error loading \(modelType.displayName): \(error.localizedDescription)"
-                modelInfo = lastError!
-                loadState = .error(lastError!)
+                let message = "Error loading \(modelType.displayName): \(error.localizedDescription)"
+                lastError = message
+                modelInfo = message
+                loadState = .error(message)
                 logger.error("load: State set to .error")
                 throw error
             }
@@ -969,18 +1026,16 @@ class LocalModelProvider {
         // Ensure cleanup of any written temp files on error
         do {
             let imageURLs = try images.compactMap { imageData -> URL? in
-                let tempDir = FileManager.default.temporaryDirectory
-
                 // Check if image data is already in a VLM-compatible format (PNG or JPEG)
                 let isPNG = imageData.count >= 8 && imageData.prefix(8).elementsEqual([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
                 let isJPEG = imageData.count >= 3 && imageData.prefix(3).elementsEqual([0xFF, 0xD8, 0xFF])
 
                 let fileURL: URL
                 if isPNG {
-                    fileURL = tempDir.appendingPathComponent(UUID().uuidString + ".png")
+                    fileURL = Self.makeManagedTempImageURL(pathExtension: "png")
                     try imageData.write(to: fileURL)
                 } else if isJPEG {
-                    fileURL = tempDir.appendingPathComponent(UUID().uuidString + ".jpg")
+                    fileURL = Self.makeManagedTempImageURL(pathExtension: "jpg")
                     try imageData.write(to: fileURL)
                 } else {
                     // For other formats, use CGImage directly
@@ -990,7 +1045,7 @@ class LocalModelProvider {
                         return nil
                     }
 
-                    fileURL = tempDir.appendingPathComponent(UUID().uuidString + ".png")
+                    fileURL = Self.makeManagedTempImageURL(pathExtension: "png")
 
                     guard let destination = CGImageDestinationCreateWithURL(fileURL as CFURL, UTType.png.identifier as CFString, 1, nil) else {
                         logger.warning("Could not create image destination")

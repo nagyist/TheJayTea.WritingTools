@@ -62,11 +62,9 @@ struct MeshLikeGradientBackground: View {
 
 struct GlassmorphicBackground: View {
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.accessibilityReduceTransparency) var reduceTransparency
 
     var body: some View {
-        // Respect Reduce Transparency accessibility setting
-        let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
-
         ZStack {
             if reduceTransparency {
                 // Fall back to a solid, high-contrast background
@@ -165,7 +163,7 @@ extension Color {
         case 8: // ARGB (32-bit)
             (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
         default:
-            (a, r, g, b) = (1, 1, 1, 0)
+            (a, r, g, b) = (255, 0, 0, 0)
         }
         self.init(
             .sRGB,

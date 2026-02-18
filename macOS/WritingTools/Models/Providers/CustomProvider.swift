@@ -15,7 +15,6 @@ final class CustomProvider: AIProvider {
     var isProcessing: Bool = false
 
     private let config: CustomProviderConfig
-    private var currentTask: Task<String, Error>?
 
     init(config: CustomProviderConfig) {
         self.config = config
@@ -25,30 +24,21 @@ final class CustomProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
-        let config = self.config
-        let systemPrompt = systemPrompt
-        let userPrompt = userPrompt
-
-        let task = Task(priority: .userInitiated) {
-            try await Self.performRequest(config: config, systemPrompt: systemPrompt, userPrompt: userPrompt, images: images)
-        }
-        currentTask = task
-        return try await task.value
+        try Task.checkCancellation()
+        return try await Self.performRequest(config: config, systemPrompt: systemPrompt, userPrompt: userPrompt, images: images)
     }
 
     func processTextStreaming(
         systemPrompt: String?,
         userPrompt: String,
         images: [Data],
-        onChunk: @escaping @MainActor (String) -> Void
+        onChunk: @escaping @Sendable @MainActor (String) -> Void
     ) async throws {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
         let config = self.config
@@ -115,43 +105,36 @@ final class CustomProvider: AIProvider {
         requestBuilder.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         let request = requestBuilder
 
-        let task = Task<String, Error> {
-            let (stream, response) = try await URLSession.shared.bytes(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw CustomProviderError.networkError("Invalid response from server")
-            }
-            guard (200...299).contains(http.statusCode) else {
-                var data = Data()
-                for try await byte in stream { data.append(byte) }
-                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let error = errorJson["error"] as? [String: Any],
-                   let message = error["message"] as? String {
-                    throw CustomProviderError.apiError("API Error (\(http.statusCode)): \(message)")
-                }
-                throw CustomProviderError.apiError("API Error: HTTP \(http.statusCode)")
-            }
-
-            for try await line in stream.lines {
-                if Task.isCancelled { break }
-                guard line.hasPrefix("data: ") else { continue }
-                let jsonStr = String(line.dropFirst(6))
-                if jsonStr.trimmingCharacters(in: .whitespaces) == "[DONE]" { break }
-                guard let data = jsonStr.data(using: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let choices = json["choices"] as? [[String: Any]],
-                      let delta = choices.first?["delta"] as? [String: Any],
-                      let content = delta["content"] as? String else { continue }
-                onChunk(content)
-            }
-            return ""
+        let (stream, response) = try await URLSession.shared.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw CustomProviderError.networkError("Invalid response from server")
         }
-        currentTask = task
-        _ = try await task.value
+        guard (200...299).contains(http.statusCode) else {
+            var data = Data()
+            for try await byte in stream { data.append(byte) }
+            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let error = errorJson["error"] as? [String: Any],
+               let message = error["message"] as? String {
+                throw CustomProviderError.apiError("API Error (\(http.statusCode)): \(message)")
+            }
+            throw CustomProviderError.apiError("API Error: HTTP \(http.statusCode)")
+        }
+
+        for try await line in stream.lines {
+            try Task.checkCancellation()
+            guard line.hasPrefix("data: ") else { continue }
+            let jsonStr = String(line.dropFirst(6))
+            if jsonStr.trimmingCharacters(in: .whitespaces) == "[DONE]" { break }
+            guard let data = jsonStr.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = json["choices"] as? [[String: Any]],
+                  let delta = choices.first?["delta"] as? [String: Any],
+                  let content = delta["content"] as? String else { continue }
+            onChunk(content)
+        }
     }
 
     func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
         isProcessing = false
     }
 

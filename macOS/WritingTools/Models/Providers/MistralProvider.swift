@@ -31,7 +31,6 @@ enum MistralModel: String, CaseIterable {
 final class MistralProvider: AIProvider {
     var isProcessing = false
     private var config: MistralConfig
-    private var currentTask: Task<String, Error>?
     
     init(config: MistralConfig) {
         self.config = config
@@ -41,91 +40,80 @@ final class MistralProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
-        let config = self.config
-        let systemPrompt = systemPrompt
-        let userPrompt = userPrompt
-        let images = images
-        let streaming = streaming
+        guard !config.apiKey.isEmpty else {
+            throw NSError(domain: "MistralAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "API key is missing."])
+        }
 
-        let task = Task.detached(priority: .userInitiated) {
-            guard !config.apiKey.isEmpty else {
-                throw NSError(domain: "MistralAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "API key is missing."])
+        let mistralService = AIProxy.mistralDirectService(unprotectedAPIKey: config.apiKey)
+
+        var messages: [MistralChatCompletionRequestBody.Message] = []
+
+        if let systemPrompt = systemPrompt {
+            messages.append(.system(content: systemPrompt))
+        }
+
+        // Extract OCR text from images (if any) and append to user prompt.
+        var combinedPrompt = userPrompt
+        if !images.isEmpty {
+            let ocrText = try await OCRManager.shared.extractText(from: images)
+            if !ocrText.isEmpty {
+                combinedPrompt += "\nExtracted Text: \(ocrText)"
             }
+        }
 
-            let mistralService = AIProxy.mistralDirectService(unprotectedAPIKey: config.apiKey)
+        messages.append(.user(content: combinedPrompt))
 
-            var messages: [MistralChatCompletionRequestBody.Message] = []
+        do {
+            if streaming {
+                var compiledResponse = ""
+                let stream = try await mistralService.streamingChatCompletionRequest(body: .init(
+                    messages: messages,
+                    model: config.model
+                ), secondsToWait: 60)
 
-            if let systemPrompt = systemPrompt {
-                messages.append(.system(content: systemPrompt))
-            }
-
-            // Extract OCR text from images (if any) and append to user prompt.
-            var combinedPrompt = userPrompt
-            if !images.isEmpty {
-                let ocrText = try await OCRManager.shared.extractText(from: images)
-                if !ocrText.isEmpty {
-                    combinedPrompt += "\nExtracted Text: \(ocrText)"
-                }
-            }
-
-            messages.append(.user(content: combinedPrompt))
-
-            do {
-                if streaming {
-                    var compiledResponse = ""
-                    let stream = try await mistralService.streamingChatCompletionRequest(body: .init(
-                        messages: messages,
-                        model: config.model
-                    ), secondsToWait: 60)
-
-                    for try await chunk in stream {
-                        if Task.isCancelled { break }
-                        if let content = chunk.choices.first?.delta.content {
-                            compiledResponse += content
-                        }
-                        if let usage = chunk.usage {
-                            logger.debug("Usage: prompt \(usage.promptTokens ?? 0), completion \(usage.completionTokens ?? 0), total \(usage.totalTokens ?? 0)")
-                        }
+                for try await chunk in stream {
+                    try Task.checkCancellation()
+                    if let content = chunk.choices.first?.delta.content {
+                        compiledResponse += content
                     }
-                    return compiledResponse
-
-                } else {
-                    let response = try await mistralService.chatCompletionRequest(body: .init(
-                        messages: messages,
-                        model: config.model
-                    ), secondsToWait: 60)
-
-                    return response.choices.first?.message.content ?? ""
+                    if let usage = chunk.usage {
+                        logger.debug("Usage: prompt \(usage.promptTokens ?? 0), completion \(usage.completionTokens ?? 0), total \(usage.totalTokens ?? 0)")
+                    }
                 }
+                return compiledResponse
 
-            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-                logger.error("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
-                throw NSError(domain: "MistralAPI",
-                              code: statusCode,
-                              userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-            } catch {
-                logger.error("Could not create mistral chat completion: \(error.localizedDescription)")
-                throw error
+            } else {
+                try Task.checkCancellation()
+                let response = try await mistralService.chatCompletionRequest(body: .init(
+                    messages: messages,
+                    model: config.model
+                ), secondsToWait: 60)
+
+                return response.choices.first?.message.content ?? ""
             }
+
+        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+            logger.error("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
+            throw NSError(domain: "MistralAPI",
+                          code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+        } catch {
+            logger.error("Could not create mistral chat completion: \(error.localizedDescription)")
+            throw error
         }
-        currentTask = task
-        return try await task.value
     }
     
     func processTextStreaming(
         systemPrompt: String?,
         userPrompt: String,
         images: [Data],
-        onChunk: @escaping @MainActor (String) -> Void
+        onChunk: @escaping @Sendable @MainActor (String) -> Void
     ) async throws {
         isProcessing = true
         defer {
             isProcessing = false
-            currentTask = nil
         }
 
         guard !config.apiKey.isEmpty else {
@@ -149,36 +137,29 @@ final class MistralProvider: AIProvider {
         }
         messages.append(.user(content: combinedPrompt))
 
-        let task = Task<String, Error> {
-            do {
-                let stream = try await mistralService.streamingChatCompletionRequest(body: .init(
-                    messages: messages,
-                    model: config.model
-                ), secondsToWait: 60)
+        do {
+            let stream = try await mistralService.streamingChatCompletionRequest(body: .init(
+                messages: messages,
+                model: config.model
+            ), secondsToWait: 60)
 
-                for try await chunk in stream {
-                    if Task.isCancelled { break }
-                    if let content = chunk.choices.first?.delta.content {
-                        onChunk(content)
-                    }
+            for try await chunk in stream {
+                try Task.checkCancellation()
+                if let content = chunk.choices.first?.delta.content {
+                    onChunk(content)
                 }
-            } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-                logger.error("Mistral streaming error (\(statusCode)): \(responseBody)")
-                throw NSError(domain: "MistralAPI", code: statusCode,
-                              userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
-            } catch {
-                logger.error("Mistral streaming failed: \(error.localizedDescription)")
-                throw error
             }
-            return ""
+        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+            logger.error("Mistral streaming error (\(statusCode)): \(responseBody)")
+            throw NSError(domain: "MistralAPI", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "API error: \(responseBody)"])
+        } catch {
+            logger.error("Mistral streaming failed: \(error.localizedDescription)")
+            throw error
         }
-        currentTask = task
-        _ = try await task.value
     }
 
     func cancel() {
-        currentTask?.cancel()
-        currentTask = nil
         isProcessing = false
     }
 }

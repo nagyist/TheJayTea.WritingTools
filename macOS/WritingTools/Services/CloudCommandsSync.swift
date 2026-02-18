@@ -15,11 +15,18 @@ extension Notification.Name {
 
 enum CloudCommandsSyncUserInfoKey {
   static let payloadBytes = "payloadBytes"
+  static let totalBytes = "totalBytes"
   static let reason = "reason"
 }
 
 @MainActor
 final class CloudCommandsSync {
+  enum SyncHealth: Equatable {
+    case idle
+    case synced
+    case quotaLimited(reason: String, payloadBytes: Int?, totalBytes: Int?)
+  }
+
   static let shared = CloudCommandsSync()
 
   private let store = NSUbiquitousKeyValueStore.default
@@ -30,6 +37,7 @@ final class CloudCommandsSync {
   private let deletedIdsKey = "icloud.commandManager.commands.v1.deleted_ids"
   private let localMTimeKey = "local.commandManager.commands.v1.mtime"
   private let localDeletedIdsKey = "local.commandManager.commands.v1.deleted_ids"
+  private let localDeletedTimestampByIdKey = "local.commandManager.commands.v1.deleted_ts_by_id"
   private let localKnownIdsKey = "local.commandManager.commands.v1.known_ids"
 
   private var started = false
@@ -43,7 +51,9 @@ final class CloudCommandsSync {
   private var suppressPush = false
   private var lastQuotaWarningDate: Date?
   private var deletedCommandIds: Set<UUID> = []
+  private var deletedCommandTimestamps: [UUID: Date] = [:]
   private var knownLocalCommandIds: Set<UUID> = []
+  private(set) var syncHealth: SyncHealth = .idle
 
   private var commandsChangedObserver: NSObjectProtocol?
   private var kvsObserver: NSObjectProtocol?
@@ -51,6 +61,7 @@ final class CloudCommandsSync {
   private let pushDebounceDelay: Duration = .milliseconds(300)
   private let kvsValueQuotaBytes = 1_000_000
   private let quotaWarningDebounceInterval: TimeInterval = 30
+  private let maxDeletedTombstones = 512
 
   private init() {
     loadLocalSyncState()
@@ -77,10 +88,13 @@ final class CloudCommandsSync {
     commandsChangedObserver = NotificationCenter.default.addObserver(
       forName: NSNotification.Name("CommandsChanged"),
       object: nil,
-      queue: .main
+      queue: nil
     ) { [weak self] _ in
-      // Ensure we run on the MainActor
-      Task { @MainActor in
+      guard Thread.isMainThread else {
+        logger.error("CloudCommandsSync: CommandsChanged received off main thread; skipping synchronous push schedule")
+        return
+      }
+      MainActor.assumeIsolated {
         self?.schedulePush()
       }
     }
@@ -116,6 +130,18 @@ final class CloudCommandsSync {
     pushDebounceTask = nil
     syncInProgress = false
     pendingSync = false
+    syncHealth = .idle
+  }
+
+  /// Cancel any pending debounce, push local commands immediately, and
+  /// call `synchronize()` to flush the KVS write to the daemon before
+  /// the process exits. Call from `applicationWillTerminate`.
+  func flushAndSynchronize() {
+    guard started else { return }
+    pushDebounceTask?.cancel()
+    pushDebounceTask = nil
+    pushLocalToICloud()
+    _ = store.synchronize()
   }
 
   // MARK: - Push local -> iCloud
@@ -140,34 +166,80 @@ final class CloudCommandsSync {
   private func pushLocalToICloud() {
 
     let commands = AppState.shared.commandManager.commands
+    let now = Date()
     let currentIds = Set(commands.map(\.id))
     let removedIds = knownLocalCommandIds.subtracting(currentIds)
 
     // Persist local deletion intent so it survives restarts/offline periods.
     deletedCommandIds.formUnion(removedIds)
+    for id in removedIds where deletedCommandTimestamps[id] == nil {
+      deletedCommandTimestamps[id] = now
+    }
     // Undelete semantics: if a command exists locally, it should not remain tombstoned.
     deletedCommandIds.subtract(currentIds)
+    for id in currentIds {
+      deletedCommandTimestamps[id] = nil
+    }
+    _ = compactDeletedTombstones(maxCount: maxDeletedTombstones, maxDeletedIdsBytes: nil)
     knownLocalCommandIds = currentIds
     persistLocalSyncState()
 
     do {
       let data = try JSONEncoder().encode(commands)
-      guard data.count <= kvsValueQuotaBytes else {
-        logger.error("CloudCommandsSync: push skipped because encoded command payload exceeds iCloud KVS value quota (\(data.count) bytes)")
-        postQuotaWarningIfNeeded(payloadBytes: data.count, reason: "preflight_payload_too_large")
+      let dataBytes = estimatedKVSValueSize(of: data)
+      guard dataBytes <= kvsValueQuotaBytes else {
+        logger.error("CloudCommandsSync: push skipped because encoded command payload exceeds iCloud KVS value quota (\(dataBytes) bytes)")
+        postQuotaWarningIfNeeded(
+          payloadBytes: dataBytes,
+          totalBytes: nil,
+          reason: "preflight_payload_too_large"
+        )
         return
       }
-      let now = Date()
+
+      var deletedIdsPayload = encodeUUIDSet(deletedCommandIds)
+      var preflight = preflightBudget(
+        commandData: data,
+        deletedIdsPayload: deletedIdsPayload,
+        mtime: now
+      )
+
+      if !preflight.isWithinQuota {
+        let deletedIdsBudget =
+          max(0, kvsValueQuotaBytes - preflight.nonManagedBytes - preflight.commandBytes - preflight.mtimeBytes)
+        if compactDeletedTombstones(maxCount: maxDeletedTombstones, maxDeletedIdsBytes: deletedIdsBudget) {
+          deletedIdsPayload = encodeUUIDSet(deletedCommandIds)
+          preflight = preflightBudget(
+            commandData: data,
+            deletedIdsPayload: deletedIdsPayload,
+            mtime: now
+          )
+          persistLocalSyncState()
+        }
+      }
+
+      guard preflight.isWithinQuota else {
+        logger.error(
+          "CloudCommandsSync: push skipped because estimated iCloud KVS total (\(preflight.totalBytes) bytes) exceeds quota"
+        )
+        postQuotaWarningIfNeeded(
+          payloadBytes: preflight.commandBytes,
+          totalBytes: preflight.totalBytes,
+          reason: "preflight_total_store_too_large"
+        )
+        return
+      }
 
       store.set(data, forKey: dataKey)
-      if deletedCommandIds.isEmpty {
+      if deletedIdsPayload.isEmpty {
         store.removeObject(forKey: deletedIdsKey)
       } else {
-        store.set(encodeUUIDSet(deletedCommandIds), forKey: deletedIdsKey)
+        store.set(deletedIdsPayload, forKey: deletedIdsKey)
       }
       store.set(now, forKey: mtimeKey)
 
       UserDefaults.standard.set(now, forKey: localMTimeKey)
+      syncHealth = .synced
     } catch {
       logger.error("CloudCommandsSync: encode error: \(error.localizedDescription)")
     }
@@ -216,6 +288,9 @@ final class CloudCommandsSync {
       let remoteDeletedCommandIds = decodeUUIDSet(
         from: store.array(forKey: deletedIdsKey) as? [String]
       )
+      for id in remoteDeletedCommandIds where deletedCommandTimestamps[id] == nil {
+        deletedCommandTimestamps[id] = remoteMTime
+      }
 
       // Cancel any in-flight push and increment the generation counter so
       // any push scheduled after the debounce period also gets skipped.
@@ -236,16 +311,20 @@ final class CloudCommandsSync {
       // Suppress pushes while applying remote changes. The `replaceAllCommands`
       // call fires a `CommandsChanged` notification which would otherwise
       // schedule a redundant push-back of the data we just received.
-      suppressPush = true
-      AppState.shared.commandManager.replaceAllCommands(with: mergedCommands)
-      suppressPush = false
+      do {
+        suppressPush = true
+        defer { suppressPush = false }
+        AppState.shared.commandManager.replaceAllCommands(with: mergedCommands)
+      }
 
       deletedCommandIds = effectiveTombstones
+      deletedCommandTimestamps = deletedCommandTimestamps.filter { effectiveTombstones.contains($0.key) }
+      _ = compactDeletedTombstones(maxCount: maxDeletedTombstones, maxDeletedIdsBytes: nil)
       knownLocalCommandIds = Set(mergedCommands.map(\.id))
       persistLocalSyncState()
       UserDefaults.standard.set(remoteMTime, forKey: localMTimeKey)
+      syncHealth = .synced
     } catch {
-      suppressPush = false
       logger.error("CloudCommandsSync: decode error: \(error.localizedDescription)")
     }
   }
@@ -281,7 +360,11 @@ final class CloudCommandsSync {
 
     if reason == NSUbiquitousKeyValueStoreQuotaViolationChange {
       logger.error("CloudCommandsSync: received iCloud KVS quota violation change notification")
-      postQuotaWarningIfNeeded(payloadBytes: nil, reason: "quota_violation_notification")
+      postQuotaWarningIfNeeded(
+        payloadBytes: nil,
+        totalBytes: nil,
+        reason: "quota_violation_notification"
+      )
       return
     }
 
@@ -309,12 +392,24 @@ final class CloudCommandsSync {
   private func loadLocalSyncState() {
     let defaults = UserDefaults.standard
     deletedCommandIds = decodeUUIDSet(from: defaults.stringArray(forKey: localDeletedIdsKey))
+    deletedCommandTimestamps = decodeDeletedCommandTimestamps(
+      from: defaults.dictionary(forKey: localDeletedTimestampByIdKey)
+    )
+    // Keep timestamp map aligned with tombstone set, and seed missing entries.
+    deletedCommandTimestamps = deletedCommandTimestamps.filter { deletedCommandIds.contains($0.key) }
+    for id in deletedCommandIds where deletedCommandTimestamps[id] == nil {
+      deletedCommandTimestamps[id] = .distantPast
+    }
     knownLocalCommandIds = decodeUUIDSet(from: defaults.stringArray(forKey: localKnownIdsKey))
   }
 
   private func persistLocalSyncState() {
     let defaults = UserDefaults.standard
     defaults.set(encodeUUIDSet(deletedCommandIds), forKey: localDeletedIdsKey)
+    defaults.set(
+      encodeDeletedCommandTimestamps(deletedCommandTimestamps),
+      forKey: localDeletedTimestampByIdKey
+    )
     defaults.set(encodeUUIDSet(knownLocalCommandIds), forKey: localKnownIdsKey)
   }
 
@@ -326,19 +421,132 @@ final class CloudCommandsSync {
     Set((rawValues ?? []).compactMap(UUID.init(uuidString:)))
   }
 
-  private func postQuotaWarningIfNeeded(payloadBytes: Int?, reason: String) {
+  private func encodeDeletedCommandTimestamps(_ timestamps: [UUID: Date]) -> [String: TimeInterval] {
+    var encoded: [String: TimeInterval] = [:]
+    for (id, date) in timestamps {
+      encoded[id.uuidString] = date.timeIntervalSince1970
+    }
+    return encoded
+  }
+
+  private func decodeDeletedCommandTimestamps(from rawValues: [String: Any]?) -> [UUID: Date] {
+    var decoded: [UUID: Date] = [:]
+    for (rawId, rawTimestamp) in rawValues ?? [:] {
+      guard let id = UUID(uuidString: rawId) else { continue }
+      if let timestampNumber = rawTimestamp as? NSNumber {
+        decoded[id] = Date(timeIntervalSince1970: timestampNumber.doubleValue)
+      }
+    }
+    return decoded
+  }
+
+  private func compactDeletedTombstones(maxCount: Int, maxDeletedIdsBytes: Int?) -> Bool {
+    guard !deletedCommandIds.isEmpty else { return false }
+
+    let sortedIds = deletedCommandIds.sorted { lhs, rhs in
+      let lhsDate = deletedCommandTimestamps[lhs] ?? .distantPast
+      let rhsDate = deletedCommandTimestamps[rhs] ?? .distantPast
+      if lhsDate == rhsDate {
+        return lhs.uuidString < rhs.uuidString
+      }
+      return lhsDate > rhsDate
+    }
+
+    var keptIds: [UUID] = []
+    let cappedCount = max(0, maxCount)
+    for id in sortedIds {
+      guard keptIds.count < cappedCount else { break }
+      let candidate = keptIds + [id]
+      if let maxDeletedIdsBytes {
+        let candidateBytes = estimatedKVSValueSize(of: candidate.map(\.uuidString))
+        if candidateBytes > maxDeletedIdsBytes {
+          continue
+        }
+      }
+      keptIds.append(id)
+    }
+
+    let newSet = Set(keptIds)
+    guard newSet != deletedCommandIds else { return false }
+
+    let removedCount = deletedCommandIds.count - newSet.count
+    deletedCommandIds = newSet
+    deletedCommandTimestamps = deletedCommandTimestamps.filter { newSet.contains($0.key) }
+    logger.warning("CloudCommandsSync: compacted \(removedCount) deleted-command tombstones")
+    return true
+  }
+
+  private struct KVSPreflightResult {
+    let commandBytes: Int
+    let deletedIdsBytes: Int
+    let mtimeBytes: Int
+    let nonManagedBytes: Int
+    let totalBytes: Int
+    let isWithinQuota: Bool
+  }
+
+  private func preflightBudget(
+    commandData: Data,
+    deletedIdsPayload: [String],
+    mtime: Date
+  ) -> KVSPreflightResult {
+    let managedKeys: Set<String> = [dataKey, deletedIdsKey, mtimeKey]
+    let nonManagedBytes = store.dictionaryRepresentation.reduce(into: 0) { partialResult, entry in
+      guard !managedKeys.contains(entry.key) else { return }
+      partialResult += estimatedKVSValueSize(of: entry.value)
+    }
+
+    let commandBytes = estimatedKVSValueSize(of: commandData)
+    let deletedIdsBytes = deletedIdsPayload.isEmpty ? 0 : estimatedKVSValueSize(of: deletedIdsPayload)
+    let mtimeBytes = estimatedKVSValueSize(of: mtime)
+    let totalBytes = nonManagedBytes + commandBytes + deletedIdsBytes + mtimeBytes
+
+    let isWithinPerValueLimit =
+      commandBytes <= kvsValueQuotaBytes
+      && deletedIdsBytes <= kvsValueQuotaBytes
+      && mtimeBytes <= kvsValueQuotaBytes
+
+    return KVSPreflightResult(
+      commandBytes: commandBytes,
+      deletedIdsBytes: deletedIdsBytes,
+      mtimeBytes: mtimeBytes,
+      nonManagedBytes: nonManagedBytes,
+      totalBytes: totalBytes,
+      isWithinQuota: isWithinPerValueLimit && totalBytes <= kvsValueQuotaBytes
+    )
+  }
+
+  private func estimatedKVSValueSize(of value: Any) -> Int {
+    guard PropertyListSerialization.propertyList(value, isValidFor: .binary) else {
+      return 0
+    }
+    guard let data = try? PropertyListSerialization.data(
+      fromPropertyList: value,
+      format: .binary,
+      options: 0
+    ) else {
+      return 0
+    }
+    return data.count
+  }
+
+  private func postQuotaWarningIfNeeded(payloadBytes: Int?, totalBytes: Int?, reason: String) {
     let now = Date()
     if let lastQuotaWarningDate,
        now.timeIntervalSince(lastQuotaWarningDate) < quotaWarningDebounceInterval {
       return
     }
     lastQuotaWarningDate = now
+    syncHealth = .quotaLimited(reason: reason, payloadBytes: payloadBytes, totalBytes: totalBytes)
 
     var userInfo: [String: Any] = [
       CloudCommandsSyncUserInfoKey.reason: reason
     ]
     if let payloadBytes {
       userInfo[CloudCommandsSyncUserInfoKey.payloadBytes] = payloadBytes
+    }
+    if let totalBytes {
+      userInfo[CloudCommandsSyncUserInfoKey.totalBytes] = totalBytes
     }
 
     NotificationCenter.default.post(

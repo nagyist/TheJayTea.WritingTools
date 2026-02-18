@@ -15,6 +15,9 @@ final class AppSettings {
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let keychain = KeychainManager.shared
     @ObservationIgnored private var isBootstrapping = true
+    @ObservationIgnored private var pendingKeychainWrites: [String: Task<Void, Never>] = [:]
+    private static let logger = AppLogger.logger("AppSettings")
+    private static let keychainWriteDebounce: Duration = .milliseconds(400)
     
     
     // MARK: - Published Settings
@@ -169,7 +172,12 @@ final class AppSettings {
         let legacyGradientThemeKey = "use_gradient_theme"
         
         // MARK: - Perform Keychain Migration (One-time on first launch after update)
-        KeychainMigrationManager.shared.migrateIfNeeded()
+        let migrationResult = KeychainMigrationManager.shared.migrateIfNeeded()
+        if case .failed(let migratedKeys, let failedKeys) = migrationResult {
+            Self.logger.error(
+                "Keychain migration had recoverable failures. Migrated keys: \(migratedKeys.count), failed keys: \(failedKeys.joined(separator: ","))"
+            )
+        }
         
         // Migrate legacy boolean theme key to theme_style once, then remove legacy key.
         if defaults.string(forKey: "theme_style") == nil,
@@ -182,20 +190,20 @@ final class AppSettings {
         // Initialize the theme style first.
         self.themeStyle = defaults.string(forKey: "theme_style") ?? "gradient"
         
-        // Load API Keys from Keychain (post-migration)
-        self.geminiApiKey = (try? keychain.retrieve(forKey: "gemini_api_key")) ?? ""
+        // Load API Keys from Keychain (post-migration) using synchronous bootstrap read
+        self.geminiApiKey = keychain.bootstrapRetrieve(forKey: "gemini_api_key") ?? ""
         let geminiModelStr = defaults.string(forKey: "gemini_model") ?? GeminiModel.gemmabig.rawValue
         self.geminiModel = GeminiModel(rawValue: geminiModelStr) ?? .gemmabig
         
         self.geminiCustomModel = defaults.string(forKey: "gemini_custom_model") ?? ""
         
-        self.openAIApiKey = (try? keychain.retrieve(forKey: "openai_api_key")) ?? ""
+        self.openAIApiKey = keychain.bootstrapRetrieve(forKey: "openai_api_key") ?? ""
         self.openAIBaseURL = defaults.string(forKey: "openai_base_url") ?? OpenAIConfig.defaultBaseURL
         self.openAIModel = defaults.string(forKey: "openai_model") ?? OpenAIConfig.defaultModel
         self.openAIOrganization = defaults.string(forKey: "openai_organization")
         self.openAIProject = defaults.string(forKey: "openai_project")
         
-        self.mistralApiKey = (try? keychain.retrieve(forKey: "mistral_api_key")) ?? ""
+        self.mistralApiKey = keychain.bootstrapRetrieve(forKey: "mistral_api_key") ?? ""
         self.mistralBaseURL = defaults.string(forKey: "mistral_base_url") ?? MistralConfig.defaultBaseURL
         self.mistralModel = defaults.string(forKey: "mistral_model") ?? MistralConfig.defaultModel
         
@@ -215,12 +223,12 @@ final class AppSettings {
         let ollamaImageModeRaw = defaults.string(forKey: "ollama_image_mode") ?? OllamaImageMode.ocr.rawValue
         self.ollamaImageMode = OllamaImageMode(rawValue: ollamaImageModeRaw) ?? .ocr
         
-        self.anthropicApiKey = (try? keychain.retrieve(forKey: "anthropic_api_key")) ?? ""
+        self.anthropicApiKey = keychain.bootstrapRetrieve(forKey: "anthropic_api_key") ?? ""
         self.anthropicModel = defaults.string(forKey: "anthropic_model") ?? AnthropicConfig.defaultModel
         
         self.selectedLocalLLMId = defaults.string(forKey: "selected_local_llm_id")
         
-        self.openRouterApiKey = (try? keychain.retrieve(forKey: "openrouter_api_key")) ?? ""
+        self.openRouterApiKey = keychain.bootstrapRetrieve(forKey: "openrouter_api_key") ?? ""
         self.openRouterModel = defaults.string(forKey: "openrouter_model") ?? OpenRouterConfig.defaultModel
         self.openRouterCustomModel = defaults.string(forKey: "openrouter_custom_model") ?? ""
         
@@ -233,15 +241,48 @@ final class AppSettings {
         isBootstrapping = false
     }
 
-    /// Writes an API key to the Keychain immediately.
-    /// API keys change rarely (only when edited in Settings), so there is no
-    /// need for debouncing. Writing immediately avoids data loss if the app
-    /// crashes or is force-quit before a debounced write completes.
+    /// Debounced write of an API key to the Keychain.
+    /// Cancels any prior pending write for the same key and schedules a new one
+    /// after a short delay. This avoids stalling the main thread on rapid edits
+    /// while ensuring the final value is persisted.
     private func scheduleKeychainWrite(_ value: String, forKey key: String) {
         // Notify observers that an API key changed so caches can be invalidated
         NotificationCenter.default.post(name: .apiKeyDidChange, object: nil)
 
-        try? keychain.save(value, forKey: key)
+        pendingKeychainWrites[key]?.cancel()
+        let keychain = self.keychain
+        let capturedValue = value
+        pendingKeychainWrites[key] = Task { @MainActor in
+            try? await Task.sleep(for: Self.keychainWriteDebounce)
+            guard !Task.isCancelled else { return }
+            try? await keychain.save(capturedValue, forKey: key, synchronizable: true)
+        }
+    }
+
+    /// Flushes all pending debounced keychain writes immediately.
+    /// Call during app termination to avoid data loss.
+    func flushPendingKeychainWrites() {
+        for (key, task) in pendingKeychainWrites {
+            task.cancel()
+            let value: String
+            switch key {
+            case "gemini_api_key": value = geminiApiKey
+            case "openai_api_key": value = openAIApiKey
+            case "mistral_api_key": value = mistralApiKey
+            case "anthropic_api_key": value = anthropicApiKey
+            case "openrouter_api_key": value = openRouterApiKey
+            default: continue
+            }
+            if value.isEmpty {
+                _ = keychain.bootstrapDelete(forKey: key, scope: .any)
+            } else {
+                let saveSucceeded = keychain.bootstrapSave(value, forKey: key, synchronizable: true)
+                if !saveSucceeded {
+                    Self.logger.error("Failed to flush API key '\(key)' to keychain during termination")
+                }
+            }
+        }
+        pendingKeychainWrites.removeAll()
     }
 
     // MARK: - Convenience
@@ -250,6 +291,8 @@ final class AppSettings {
         UserDefaults.standard.removePersistentDomain(forName: domain)
 
         // Clear Keychain API keys
-        try? keychain.clearAllApiKeys()
+        Task {
+            try? await keychain.clearAllApiKeys()
+        }
     }
 }

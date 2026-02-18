@@ -136,10 +136,12 @@ struct ClipboardSnapshot {
     }
 
     private func makePasteboardItems() -> [NSPasteboardItem] {
-        items.map { itemData in
+        items.enumerated().map { (index, itemData) in
             let pasteboardItem = NSPasteboardItem()
             for (type, data) in itemData {
-                pasteboardItem.setData(data, forType: type)
+                if !pasteboardItem.setData(data, forType: type) {
+                    logger.warning("ClipboardSnapshot: setData failed for item \(index), type \(type.rawValue) (\(data.count) bytes)")
+                }
             }
             return pasteboardItem
         }
