@@ -10,21 +10,29 @@
 		420ADBB92E2D2FB400D4A564 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 420ADBB82E2D2FB400D4A564 /* MarkdownUI */; };
 		420ADBBC2E2D2FCB00D4A564 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 420ADBBB2E2D2FCB00D4A564 /* KeyboardShortcuts */; };
 		420ADBBF2E2D300F00D4A564 /* AIProxy in Frameworks */ = {isa = PBXBuildFile; productRef = 420ADBBE2E2D300F00D4A564 /* AIProxy */; };
-		42655EE02E2D3380000EB2FE /* MLXEmbedders in Frameworks */ = {isa = PBXBuildFile; productRef = 42655EDF2E2D3380000EB2FE /* MLXEmbedders */; };
-		42655EE22E2D3380000EB2FE /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 42655EE12E2D3380000EB2FE /* MLXLLM */; };
-		42655EE42E2D3380000EB2FE /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 42655EE32E2D3380000EB2FE /* MLXLMCommon */; };
-		42655EE62E2D3380000EB2FE /* MLXMNIST in Frameworks */ = {isa = PBXBuildFile; productRef = 42655EE52E2D3380000EB2FE /* MLXMNIST */; };
-		42655EE82E2D3380000EB2FE /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = 42655EE72E2D3380000EB2FE /* MLXVLM */; };
 		42D3D3392EE0DF8B00105C2F /* LaTeXSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = 42D3D3382EE0DF8B00105C2F /* LaTeXSwiftUI */; };
 		42D3D33C2EE0E51300105C2F /* MarkdownView in Frameworks */ = {isa = PBXBuildFile; productRef = 42D3D33B2EE0E51300105C2F /* MarkdownView */; };
 		42D870F32EC4D1C5001B0626 /* MLXEmbedders in Frameworks */ = {isa = PBXBuildFile; productRef = 42D870F22EC4D1C5001B0626 /* MLXEmbedders */; };
 		42D870F52EC4D1C5001B0626 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 42D870F42EC4D1C5001B0626 /* MLXLLM */; };
 		42D870F72EC4D1C5001B0626 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 42D870F62EC4D1C5001B0626 /* MLXLMCommon */; };
 		42D870F92EC4D1C5001B0626 /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = 42D870F82EC4D1C5001B0626 /* MLXVLM */; };
+		DD3DE72BFEB740C5BEEFB9CD /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 43D591604FB841ACB71D3854 /* XCTest.framework */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5168C0A4A5AF43C0B371CCE3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2ABCBC162CDEB606001E4B5E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2ABCBC1D2CDEB606001E4B5E;
+			remoteInfo = WritingTools;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		4293055F2E2FD66E00685531 /* WritingTools.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WritingTools.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		43D591604FB841ACB71D3854 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		5737CDBCC2144BFB9D8A884C /* WritingToolsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WritingToolsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -46,6 +54,11 @@
 			path = WritingTools;
 			sourceTree = "<group>";
 		};
+		E1594CBD03A8412A863CFF90 /* WritingToolsTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = WritingToolsTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,19 +67,22 @@
 			buildActionMask = 2147483647;
 			files = (
 				42D870F52EC4D1C5001B0626 /* MLXLLM in Frameworks */,
-				42655EE62E2D3380000EB2FE /* MLXMNIST in Frameworks */,
-				42655EE22E2D3380000EB2FE /* MLXLLM in Frameworks */,
-				42655EE02E2D3380000EB2FE /* MLXEmbedders in Frameworks */,
 				42D3D3392EE0DF8B00105C2F /* LaTeXSwiftUI in Frameworks */,
 				420ADBBF2E2D300F00D4A564 /* AIProxy in Frameworks */,
 				420ADBB92E2D2FB400D4A564 /* MarkdownUI in Frameworks */,
-				42655EE42E2D3380000EB2FE /* MLXLMCommon in Frameworks */,
 				42D870F32EC4D1C5001B0626 /* MLXEmbedders in Frameworks */,
 				42D3D33C2EE0E51300105C2F /* MarkdownView in Frameworks */,
-				42655EE82E2D3380000EB2FE /* MLXVLM in Frameworks */,
 				42D870F92EC4D1C5001B0626 /* MLXVLM in Frameworks */,
 				420ADBBC2E2D2FCB00D4A564 /* KeyboardShortcuts in Frameworks */,
 				42D870F72EC4D1C5001B0626 /* MLXLMCommon in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A6992DA4D0B84CDC9AB213BF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DD3DE72BFEB740C5BEEFB9CD /* XCTest.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -77,8 +93,19 @@
 			isa = PBXGroup;
 			children = (
 				2ABCBC202CDEB606001E4B5E /* WritingTools */,
+				E1594CBD03A8412A863CFF90 /* WritingToolsTests */,
 				4293055F2E2FD66E00685531 /* WritingTools.app */,
+				5737CDBCC2144BFB9D8A884C /* WritingToolsTests.xctest */,
+				425CFAD52F5066D2007A8704 /* Frameworks */,
 			);
+			sourceTree = "<group>";
+		};
+		425CFAD52F5066D2007A8704 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				43D591604FB841ACB71D3854 /* XCTest.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -104,11 +131,6 @@
 				420ADBB82E2D2FB400D4A564 /* MarkdownUI */,
 				420ADBBB2E2D2FCB00D4A564 /* KeyboardShortcuts */,
 				420ADBBE2E2D300F00D4A564 /* AIProxy */,
-				42655EDF2E2D3380000EB2FE /* MLXEmbedders */,
-				42655EE12E2D3380000EB2FE /* MLXLLM */,
-				42655EE32E2D3380000EB2FE /* MLXLMCommon */,
-				42655EE52E2D3380000EB2FE /* MLXMNIST */,
-				42655EE72E2D3380000EB2FE /* MLXVLM */,
 				42D870F22EC4D1C5001B0626 /* MLXEmbedders */,
 				42D870F42EC4D1C5001B0626 /* MLXLLM */,
 				42D870F62EC4D1C5001B0626 /* MLXLMCommon */,
@@ -119,6 +141,29 @@
 			productName = "swift-writing-tools";
 			productReference = 4293055F2E2FD66E00685531 /* WritingTools.app */;
 			productType = "com.apple.product-type.application";
+		};
+		B33FA25618284DFABC2B7B04 /* WritingToolsTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B3939A68EFDD434F89C2B978 /* Build configuration list for PBXNativeTarget "WritingToolsTests" */;
+			buildPhases = (
+				A43D00BC18F142B29475DE18 /* Sources */,
+				A6992DA4D0B84CDC9AB213BF /* Frameworks */,
+				3DF210A8B6DC4507B3231ECF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA08EC76E31E484EA842E437 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E1594CBD03A8412A863CFF90 /* WritingToolsTests */,
+			);
+			name = WritingToolsTests;
+			packageProductDependencies = (
+			);
+			productName = WritingToolsTests;
+			productReference = 5737CDBCC2144BFB9D8A884C /* WritingToolsTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -132,6 +177,10 @@
 				TargetAttributes = {
 					2ABCBC1D2CDEB606001E4B5E = {
 						CreatedOnToolsVersion = 16.1;
+					};
+					B33FA25618284DFABC2B7B04 = {
+						CreatedOnToolsVersion = 17.0;
+						TestTargetID = 2ABCBC1D2CDEB606001E4B5E;
 					};
 				};
 			};
@@ -148,7 +197,6 @@
 			mainGroup = 2ABCBC152CDEB606001E4B5E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				428BD5FA2E2D2EBC0089EED4 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */,
 				420ADBB72E2D2FB400D4A564 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 				420ADBBA2E2D2FCB00D4A564 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 				420ADBBD2E2D300F00D4A564 /* XCRemoteSwiftPackageReference "aiproxyswift" */,
@@ -162,12 +210,20 @@
 			projectRoot = "";
 			targets = (
 				2ABCBC1D2CDEB606001E4B5E /* WritingTools */,
+				B33FA25618284DFABC2B7B04 /* WritingToolsTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		2ABCBC1C2CDEB606001E4B5E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3DF210A8B6DC4507B3231ECF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -184,9 +240,47 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A43D00BC18F142B29475DE18 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		AA08EC76E31E484EA842E437 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2ABCBC1D2CDEB606001E4B5E /* WritingTools */;
+			targetProxy = 5168C0A4A5AF43C0B371CCE3 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		101D1B0A506949C0AB726763 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 66;
+				DEVELOPMENT_TEAM = MK2V998W66;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.aryamirsepasi.writing-tools.tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WritingTools.app/Contents/MacOS/WritingTools";
+				TEST_TARGET_NAME = WritingTools;
+			};
+			name = Debug;
+		};
 		2ABCBC412CDEB607001E4B5E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -327,7 +421,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 66;
+				CURRENT_PROJECT_VERSION = 70;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"WritingTools/Preview Content\"";
 				DEVELOPMENT_TEAM = "";
@@ -379,7 +473,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 66;
+				CURRENT_PROJECT_VERSION = 70;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"WritingTools/Preview Content\"";
 				DEVELOPMENT_TEAM = "";
@@ -419,6 +513,29 @@
 			};
 			name = Release;
 		};
+		83A3D6BE612846D498C7C1BF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 66;
+				DEVELOPMENT_TEAM = MK2V998W66;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.aryamirsepasi.writing-tools.tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WritingTools.app/Contents/MacOS/WritingTools";
+				TEST_TARGET_NAME = WritingTools;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -436,6 +553,15 @@
 			buildConfigurations = (
 				2ABCBC442CDEB607001E4B5E /* Debug */,
 				2ABCBC452CDEB607001E4B5E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B3939A68EFDD434F89C2B978 /* Build configuration list for PBXNativeTarget "WritingToolsTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				101D1B0A506949C0AB726763 /* Debug */,
+				83A3D6BE612846D498C7C1BF /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -467,20 +593,12 @@
 				minimumVersion = 0.120.0;
 			};
 		};
-		428BD5FA2E2D2EBC0089EED4 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ml-explore/mlx-swift-examples.git";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 		42D3D3372EE0DF8B00105C2F /* XCRemoteSwiftPackageReference "LaTeXSwiftUI" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/colinc86/LaTeXSwiftUI";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = exactVersion;
+				version = 1.5.0;
 			};
 		};
 		42D3D33A2EE0E51300105C2F /* XCRemoteSwiftPackageReference "MarkdownView" */ = {
@@ -495,8 +613,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm/";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = exactVersion;
+				version = 2.30.6;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -516,31 +634,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 420ADBBD2E2D300F00D4A564 /* XCRemoteSwiftPackageReference "aiproxyswift" */;
 			productName = AIProxy;
-		};
-		42655EDF2E2D3380000EB2FE /* MLXEmbedders */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 428BD5FA2E2D2EBC0089EED4 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
-			productName = MLXEmbedders;
-		};
-		42655EE12E2D3380000EB2FE /* MLXLLM */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 428BD5FA2E2D2EBC0089EED4 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
-			productName = MLXLLM;
-		};
-		42655EE32E2D3380000EB2FE /* MLXLMCommon */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 428BD5FA2E2D2EBC0089EED4 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
-			productName = MLXLMCommon;
-		};
-		42655EE52E2D3380000EB2FE /* MLXMNIST */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 428BD5FA2E2D2EBC0089EED4 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
-			productName = MLXMNIST;
-		};
-		42655EE72E2D3380000EB2FE /* MLXVLM */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 428BD5FA2E2D2EBC0089EED4 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
-			productName = MLXVLM;
 		};
 		42D3D3382EE0DF8B00105C2F /* LaTeXSwiftUI */ = {
 			isa = XCSwiftPackageProductDependency;

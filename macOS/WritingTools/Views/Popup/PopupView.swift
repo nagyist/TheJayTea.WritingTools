@@ -27,6 +27,9 @@ struct PopupView: View {
   @State private var showingErrorAlert = false
   @State private var errorMessage = ""
   
+  // Track in-flight custom instruction task to prevent races
+  @State private var customInstructionTask: Task<Void, Never>?
+  
   // Focus management for accessibility
   @FocusState private var isTextFieldFocused: Bool
 
@@ -254,8 +257,10 @@ struct PopupView: View {
   private func processCustomChange() {
     let instruction = customText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !instruction.isEmpty else { return }
+    // Cancel any in-flight custom instruction to prevent racing tasks
+    customInstructionTask?.cancel()
     isCustomLoading = true
-    Task {
+    customInstructionTask = Task {
       await processCustomInstruction(instruction)
     }
   }

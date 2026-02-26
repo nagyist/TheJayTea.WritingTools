@@ -57,20 +57,30 @@ final class OCRManager: Sendable {
         return CGImageSourceCreateImageAtIndex(imageSource, 0, sourceOptions)
     }
 
-    // Extracts text from an array of images.
+    // Extracts text from an array of images concurrently while preserving order.
     func extractText(from images: [Data]) async throws -> String {
-        var extractedSegments: [String] = []
-        extractedSegments.reserveCapacity(images.count)
+        guard !images.isEmpty else { return "" }
 
-        for imageData in images {
-            try Task.checkCancellation()
-            let text = try await extractText(from: imageData)
-            if !text.isEmpty {
-                extractedSegments.append(text)
+        let results: [(Int, String)] = try await withThrowingTaskGroup(of: (Int, String).self) { group in
+            for (index, imageData) in images.enumerated() {
+                group.addTask {
+                    let text = try await self.extractText(from: imageData)
+                    return (index, text)
+                }
             }
+
+            var collected: [(Int, String)] = []
+            collected.reserveCapacity(images.count)
+            for try await result in group {
+                collected.append(result)
+            }
+            return collected
         }
 
-        return extractedSegments
+        return results
+            .sorted { $0.0 < $1.0 }
+            .map(\.1)
+            .filter { !$0.isEmpty }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }

@@ -1,11 +1,20 @@
 import SwiftUI
 import AppKit
 
-enum AppTheme: String {
+enum AppTheme: String, CaseIterable {
     case standard
     case gradient
     case glass
     case oled
+    
+    var displayName: String {
+        switch self {
+        case .standard: return "Standard"
+        case .gradient: return "Gradient"
+        case .glass: return "Glass"
+        case .oled: return "OLED"
+        }
+    }
 }
 
 struct WindowBackground: ViewModifier {
@@ -23,7 +32,7 @@ struct WindowBackground: ViewModifier {
         if !useGradient {
             return .standard
         }
-        return AppTheme(rawValue: settings.themeStyle) ?? .gradient
+        return settings.themeStyle
     }
 
     func body(content: Content) -> some View {
@@ -101,50 +110,34 @@ struct LiquidGlassBackground: View {
     }
 }
 
-/// Legacy glass effect for macOS versions before 26.0
+/// Legacy glass effect for macOS versions before 26.0.
+/// Uses a single material layer with a lightweight gradient overlay to reduce GPU compositing.
 struct LegacyGlassBackground: View {
     let colorScheme: ColorScheme
     
     var body: some View {
         ZStack {
-            // Base subtle tint for both light and dark (increased opacity)
-            (colorScheme == .light ? Color.white.opacity(0.15) : Color.white.opacity(0.08))
+            // Core blur/translucency material
+            Rectangle()
+                .fill(Material.thick)
 
-            // Soft white highlight from top-left to center to enhance "glass" sheen
+            // Single combined highlight + tint gradient
             LinearGradient(
                 colors: [
-                    Color.white.opacity(colorScheme == .light ? 0.35 : 0.20),
-                    Color.clear
-                ],
-                startPoint: .topLeading,
-                endPoint: .center
-            )
-            .blendMode(.plusLighter)
-
-            // Gentle color tint for depth (subtle and theme-agnostic)
-            LinearGradient(
-                colors: [
-                    Color.blue.opacity(0.15),
-                    Color.purple.opacity(0.12),
+                    Color.white.opacity(colorScheme == .light ? 0.25 : 0.12),
+                    Color.blue.opacity(0.06),
                     Color.clear
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-            .blendMode(.softLight)
-
-            // Core blur/translucency material (using thicker material)
-            Rectangle()
-                .fill(Material.thick)
-                .opacity(0.75)
 
             // Subtle inner border to define edges of the glass
             Rectangle()
                 .strokeBorder(
-                    Color.white.opacity(colorScheme == .light ? 0.30 : 0.15),
-                    lineWidth: 1
+                    Color.white.opacity(colorScheme == .light ? 0.25 : 0.12),
+                    lineWidth: 0.5
                 )
-                .blendMode(.overlay)
         }
     }
 }

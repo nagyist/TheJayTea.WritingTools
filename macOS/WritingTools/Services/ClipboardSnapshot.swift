@@ -16,6 +16,7 @@ enum ClipboardRestoreOutcome: Equatable {
 }
 
 /// A comprehensive snapshot of the clipboard state that captures all items and all types
+@MainActor
 struct ClipboardSnapshot {
     /// All pasteboard items with their data
     private let items: [[NSPasteboard.PasteboardType: Data]]
@@ -59,12 +60,14 @@ struct ClipboardSnapshot {
     func restore() -> Bool {
         let pb = NSPasteboard.general
         let pasteboardItems = makePasteboardItems()
-        pb.prepareForNewContents(with: [])
-        
+
         guard !pasteboardItems.isEmpty else {
             logger.info("ClipboardSnapshot: No items to restore")
             return true
         }
+
+        // Clear only after confirming we have items to write back
+        pb.prepareForNewContents(with: [])
 
         // Write all items to the pasteboard
         let success = pb.writeObjects(pasteboardItems)
@@ -148,6 +151,7 @@ struct ClipboardSnapshot {
     }
 }
 
+@MainActor
 extension NSPasteboard {
     /// Convenience method to create and return a snapshot
     func createSnapshot() -> ClipboardSnapshot {

@@ -7,6 +7,7 @@ enum CommandExecutionEngineError: LocalizedError {
   case captureInProgress
   case noNewCopiedContent(commandName: String)
   case emptySelection(commandName: String)
+  case customProviderConfigurationIncomplete(commandName: String, missingFields: [String])
 
   var errorDescription: String? {
     switch self {
@@ -18,7 +19,17 @@ enum CommandExecutionEngineError: LocalizedError {
       return "No new content was copied for command: \(commandName)"
     case .emptySelection(let commandName):
       return "No text or images selected for command: \(commandName)"
+    case .customProviderConfigurationIncomplete(let commandName, let missingFields):
+      let fieldList = missingFields.joined(separator: ", ")
+      return "Custom provider for '\(commandName)' is incomplete. Missing: \(fieldList). Update the command's custom provider settings."
     }
+  }
+
+  var missingCustomProviderFields: [String]? {
+    guard case .customProviderConfigurationIncomplete(_, let missingFields) = self else {
+      return nil
+    }
+    return missingFields
   }
 }
 
@@ -55,15 +66,27 @@ final class CommandExecutionEngine {
     }
 
     appState.isProcessing = true
-    defer { appState.isProcessing = false }
 
-    try await prepareSelectionIfNeeded(for: source, commandName: command.name)
+    let input: CommandExecutionInput
+    let provider: any AIProvider
+    let shouldUseResponseWindow: Bool
 
-    let input = try await appState.resolveCommandInput(mode: .textOrImagesWithOCRFallback)
-    let provider = appState.getProvider(for: command)
-    let shouldUseResponseWindow = command.useResponseWindow || input.source == .imageOCRFallback
+    do {
+      try await prepareSelectionIfNeeded(for: source, commandName: command.name)
+      try validateCustomProviderConfiguration(for: command)
+      input = try await appState.resolveCommandInput(mode: .textOrImagesWithOCRFallback)
+      provider = appState.getProvider(for: command)
+      shouldUseResponseWindow = command.useResponseWindow || input.source == .imageOCRFallback
+    } catch {
+      appState.isProcessing = false
+      throw error
+    }
 
     if shouldUseResponseWindow {
+      // Response windows manage their own processing lifecycle independently,
+      // so release the global isProcessing guard to allow other commands.
+      appState.isProcessing = false
+
       let selectedText = input.source == .selectedText ? appState.selectedText : "Image selection (OCR)"
       openStreamingResponseWindow(
         title: command.name,
@@ -78,6 +101,8 @@ final class CommandExecutionEngine {
       return .openedResponseWindow
     }
 
+    defer { appState.isProcessing = false }
+
     var result = try await provider.processText(
       systemPrompt: command.prompt,
       userPrompt: input.userPrompt,
@@ -86,13 +111,13 @@ final class CommandExecutionEngine {
     )
 
     if input.source == .selectedText {
-      result = normalizedInlineReplacement(
+      result = Self.normalizedInlineReplacement(
         result,
         originalSelectedText: appState.selectedText
       )
     }
 
-    if command.preserveFormatting, appState.selectedAttributedText != nil {
+    if command.effectivePreserveFormatting, appState.selectedAttributedText != nil {
       appState.replaceSelectedTextPreservingAttributes(with: result)
     } else {
       appState.replaceSelectedText(with: result)
@@ -123,9 +148,13 @@ final class CommandExecutionEngine {
     }
 
     appState.isProcessing = true
-    defer { appState.isProcessing = false }
 
-    try await prepareSelectionIfNeeded(for: source, commandName: "Custom Instruction")
+    do {
+      try await prepareSelectionIfNeeded(for: source, commandName: "Custom Instruction")
+    } catch {
+      appState.isProcessing = false
+      throw error
+    }
 
     let systemPrompt = Self.customInstructionSystemPrompt
     let selectedText = appState.selectedText
@@ -139,6 +168,9 @@ final class CommandExecutionEngine {
         """
 
     if openInResponseWindow {
+      // Response windows manage their own processing lifecycle independently.
+      appState.isProcessing = false
+
       openStreamingResponseWindow(
         title: "AI Response",
         selectedText: selectedText.isEmpty ? trimmedInstruction : selectedText,
@@ -152,6 +184,8 @@ final class CommandExecutionEngine {
       return .openedResponseWindow
     }
 
+    defer { appState.isProcessing = false }
+
     var result = try await appState.activeProvider.processText(
       systemPrompt: systemPrompt,
       userPrompt: userPrompt,
@@ -159,11 +193,15 @@ final class CommandExecutionEngine {
       streaming: false
     )
 
-    result = normalizedInlineReplacement(
+    result = Self.normalizedInlineReplacement(
       result,
       originalSelectedText: selectedText
     )
-    appState.replaceSelectedText(with: result)
+    if appState.selectedAttributedText != nil {
+      appState.replaceSelectedTextPreservingAttributes(with: result)
+    } else {
+      appState.replaceSelectedText(with: result)
+    }
 
     if source == .popup {
       closePopupOnInlineCompletion?()
@@ -207,14 +245,67 @@ final class CommandExecutionEngine {
     }
   }
 
-  private func normalizedInlineReplacement(
+  private func validateCustomProviderConfiguration(for command: CommandModel) throws {
+    guard command.providerOverride == "custom" else { return }
+
+    let baseURL = command.customProviderBaseURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let model = command.customProviderModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let apiKey =
+      KeychainManager.shared.retrieveCustomProviderApiKeySync(for: command.id)?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+    guard
+      let error = Self.customProviderConfigurationErrorIfIncomplete(
+        commandName: command.name,
+        baseURL: baseURL,
+        apiKey: apiKey,
+        model: model
+      )
+    else { return }
+
+    logger.error(
+      """
+      CommandExecutionEngine: custom provider configuration incomplete for \(command.name) \
+      (missing: \((error.missingCustomProviderFields ?? []).joined(separator: ", ")))
+      """
+    )
+    throw error
+  }
+
+  nonisolated static func customProviderConfigurationErrorIfIncomplete(
+    commandName: String,
+    baseURL: String?,
+    apiKey: String?,
+    model: String?
+  ) -> CommandExecutionEngineError? {
+    let missingFields = missingCustomProviderFields(baseURL: baseURL, apiKey: apiKey, model: model)
+    guard !missingFields.isEmpty else { return nil }
+    return .customProviderConfigurationIncomplete(commandName: commandName, missingFields: missingFields)
+  }
+
+  nonisolated static func missingCustomProviderFields(baseURL: String?, apiKey: String?, model: String?) -> [String] {
+    var missingFields: [String] = []
+    if baseURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+      missingFields.append("Base URL")
+    }
+    if apiKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+      missingFields.append("API Key")
+    }
+    if model?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+      missingFields.append("Model")
+    }
+    return missingFields
+  }
+
+  /// Ensures the output preserves a trailing newline when the original text had one.
+  /// Exposed as `static` for unit testing.
+  nonisolated static func normalizedInlineReplacement(
     _ output: String,
     originalSelectedText: String
   ) -> String {
     guard originalSelectedText.hasSuffix("\n"), !output.hasSuffix("\n") else {
       return output
     }
-    logger.debug("Added trailing newline to match input")
     return output + "\n"
   }
 

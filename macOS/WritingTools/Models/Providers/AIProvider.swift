@@ -1,4 +1,5 @@
 import Foundation
+import AIProxy
 
 @MainActor
 protocol AIProvider {
@@ -41,6 +42,41 @@ extension AIProvider {
     }
 }
 
+// MARK: - Image Format Detection
+
+/// Detects image MIME type from the first bytes of the data.
+/// Returns a sensible default ("image/jpeg") when the format is unrecognized.
+func detectImageMIMEType(_ data: Data) -> String {
+    guard data.count >= 4 else { return "image/jpeg" }
+    let header = [UInt8](data.prefix(4))
+    if header[0] == 0xFF && header[1] == 0xD8 {
+        return "image/jpeg"
+    } else if header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47 {
+        return "image/png"
+    } else if header[0] == 0x47 && header[1] == 0x49 && header[2] == 0x46 {
+        return "image/gif"
+    } else if header[0] == 0x52 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x46 {
+        return "image/webp"
+    }
+    return "image/jpeg"
+}
+
+/// Detects the Anthropic `AnthropicImageMediaType` from image data header bytes.
+func detectAnthropicMediaType(_ data: Data) -> AnthropicImageMediaType {
+    guard data.count >= 4 else { return .jpeg }
+    let header = [UInt8](data.prefix(4))
+    if header[0] == 0xFF && header[1] == 0xD8 {
+        return .jpeg
+    } else if header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47 {
+        return .png
+    } else if header[0] == 0x47 && header[1] == 0x49 && header[2] == 0x46 {
+        return .gif
+    } else if header[0] == 0x52 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x46 {
+        return .webp
+    }
+    return .jpeg
+}
+
 // MARK: - Retry Utility for API Calls
 
 /// Errors that should be retried (transient network issues)
@@ -58,10 +94,17 @@ enum RetryableError {
             }
         }
 
-        // Check for HTTP 5xx errors (server errors are often transient)
-        if let nsError = error as NSError? {
-            let statusCode = nsError.code
-            return (500...599).contains(statusCode)
+        // Check for HTTP 5xx errors only from known API error domains.
+        // We must not cast arbitrary errors to NSError and check `.code`,
+        // because any Error becomes an NSError and its code may coincidentally
+        // fall in the 500-599 range (e.g. file-not-found = 513).
+        let nsError = error as NSError
+        let apiDomains: Set<String> = [
+            "GeminiAPI", "AnthropicAPI", "OpenAIAPI", "MistralAPI",
+            "OpenRouterAPI", "OllamaAPI", "CustomProvider"
+        ]
+        if apiDomains.contains(nsError.domain) {
+            return (500...599).contains(nsError.code)
         }
 
         return false

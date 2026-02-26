@@ -260,14 +260,18 @@ struct PromptEditorView: View {
 
     // MARK: - Mode Change Handler
 
+    @State private var showModeChangeAlert = false
+
     private func handleModeChange(to newMode: EditorMode) {
         if newMode == .advanced {
             // Switching to advanced: try to parse simple text as JSON
             if let parsed = PromptStructure.from(jsonString: simplePromptText) {
                 promptStructure = parsed
-            } else {
-                // If not valid JSON, keep current structure or use default
-                // User can start building from scratch
+            } else if !simplePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // Preserve the user's text as the "task" field so nothing is lost
+                var structure = PromptStructure.default
+                structure.task = simplePromptText
+                promptStructure = structure
             }
             let updated = promptStructure.toJSONString(pretty: true)
             prompt = updated

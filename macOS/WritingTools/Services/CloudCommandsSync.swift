@@ -88,12 +88,8 @@ final class CloudCommandsSync {
     commandsChangedObserver = NotificationCenter.default.addObserver(
       forName: NSNotification.Name("CommandsChanged"),
       object: nil,
-      queue: nil
+      queue: .main
     ) { [weak self] _ in
-      guard Thread.isMainThread else {
-        logger.error("CloudCommandsSync: CommandsChanged received off main thread; skipping synchronous push schedule")
-        return
-      }
       MainActor.assumeIsolated {
         self?.schedulePush()
       }
@@ -303,7 +299,7 @@ final class CloudCommandsSync {
       // local-only commands are preserved, and remote-only commands are added.
       let localCommands = AppState.shared.commandManager.commands
       var effectiveTombstones = deletedCommandIds.union(remoteDeletedCommandIds)
-      var mergedCommands = mergeCommands(local: localCommands, remote: remoteCommands)
+      var mergedCommands = Self.mergeCommands(local: localCommands, remote: remoteCommands)
       mergedCommands.removeAll { effectiveTombstones.contains($0.id) }
       // If a command currently exists after merge, it is no longer deleted.
       effectiveTombstones.subtract(mergedCommands.map(\.id))
@@ -338,7 +334,7 @@ final class CloudCommandsSync {
   /// - Commands only in local: keep them (created locally, not yet pushed).
   ///
   /// Ordering follows the remote list, with local-only commands appended at the end.
-  private func mergeCommands(local: [CommandModel], remote: [CommandModel]) -> [CommandModel] {
+  nonisolated static func mergeCommands(local: [CommandModel], remote: [CommandModel]) -> [CommandModel] {
     let remoteIds = Set(remote.map(\.id))
 
     // Start with the remote list (preserving remote ordering and content)
@@ -358,7 +354,7 @@ final class CloudCommandsSync {
       let reason = userInfo[NSUbiquitousKeyValueStoreChangeReasonKey] as? Int
     else { return }
 
-    if reason == NSUbiquitousKeyValueStoreQuotaViolationChange {
+    if Self.isQuotaViolationReason(reason) {
       logger.error("CloudCommandsSync: received iCloud KVS quota violation change notification")
       postQuotaWarningIfNeeded(
         payloadBytes: nil,
@@ -368,19 +364,64 @@ final class CloudCommandsSync {
       return
     }
 
-    guard reason == NSUbiquitousKeyValueStoreServerChange
-      || reason == NSUbiquitousKeyValueStoreInitialSyncChange
+    if Self.isAccountChangeReason(reason) {
+      logger.info("CloudCommandsSync: received iCloud account-change notification; resetting local sync markers and reconciling")
+      resetLocalSyncMarkersForAccountChange()
+      schedulePull()
+      return
+    }
+
+    guard Self.isServerDrivenPullReason(reason)
     else {
       return
     }
 
-    if
-      let changedKeys =
-        userInfo[NSUbiquitousKeyValueStoreChangedKeysKey] as? [String],
-      changedKeys.contains(where: { $0 == dataKey || $0 == mtimeKey || $0 == deletedIdsKey })
-    {
+    let changedKeys = userInfo[NSUbiquitousKeyValueStoreChangedKeysKey] as? [String]
+    if Self.hasRelevantChangedKeys(changedKeys, dataKey: dataKey, mtimeKey: mtimeKey, deletedIdsKey: deletedIdsKey) {
       schedulePull()
     }
+  }
+
+  nonisolated static func isQuotaViolationReason(_ reason: Int) -> Bool {
+    reason == NSUbiquitousKeyValueStoreQuotaViolationChange
+  }
+
+  nonisolated static func isAccountChangeReason(_ reason: Int) -> Bool {
+    reason == NSUbiquitousKeyValueStoreAccountChange
+  }
+
+  nonisolated static func isServerDrivenPullReason(_ reason: Int) -> Bool {
+    reason == NSUbiquitousKeyValueStoreServerChange
+      || reason == NSUbiquitousKeyValueStoreInitialSyncChange
+  }
+
+  nonisolated static func hasRelevantChangedKeys(
+    _ changedKeys: [String]?,
+    dataKey: String,
+    mtimeKey: String,
+    deletedIdsKey: String
+  ) -> Bool {
+    guard let changedKeys else { return false }
+    return changedKeys.contains { key in
+      key == dataKey || key == mtimeKey || key == deletedIdsKey
+    }
+  }
+
+  private func resetLocalSyncMarkersForAccountChange() {
+    // Clear stale reconciliation state so the next pull is computed against the new account.
+    pushDebounceTask?.cancel()
+    pushDebounceTask = nil
+    cloudApplyGeneration &+= 1
+
+    let defaults = UserDefaults.standard
+    defaults.removeObject(forKey: localMTimeKey)
+
+    deletedCommandIds.removeAll()
+    deletedCommandTimestamps.removeAll()
+    knownLocalCommandIds = Set(AppState.shared.commandManager.commands.map(\.id))
+    persistLocalSyncState()
+
+    logger.info("CloudCommandsSync: local sync markers reset after account change")
   }
 
   private func bootstrapKnownLocalIdsIfNeeded() {
@@ -454,16 +495,33 @@ final class CloudCommandsSync {
 
     var keptIds: [UUID] = []
     let cappedCount = max(0, maxCount)
-    for id in sortedIds {
-      guard keptIds.count < cappedCount else { break }
-      let candidate = keptIds + [id]
-      if let maxDeletedIdsBytes {
-        let candidateBytes = estimatedKVSValueSize(of: candidate.map(\.uuidString))
-        if candidateBytes > maxDeletedIdsBytes {
-          continue
-        }
-      }
-      keptIds.append(id)
+
+    // When a byte budget is specified, estimate the per-UUID overhead once
+    // (all UUIDs are 36 characters and produce identical plist overhead)
+    // rather than re-serializing the growing array on every iteration.
+    let perUUIDByteEstimate: Int? = {
+        guard maxDeletedIdsBytes != nil else { return nil }
+      // Measure the marginal cost of a single UUID in a plist array.
+      let oneItem = estimatedKVSValueSize(of: [UUID().uuidString])
+      let twoItems = estimatedKVSValueSize(of: [UUID().uuidString, UUID().uuidString])
+      let marginal = twoItems - oneItem
+      let baseOverhead = oneItem - marginal
+      // We'll check: baseOverhead + count * marginal <= maxDeletedIdsBytes
+      _ = baseOverhead
+      return marginal > 0 ? marginal : nil
+    }()
+
+    if let maxDeletedIdsBytes, let perUUID = perUUIDByteEstimate {
+      // Fast path: estimate byte cost arithmetically
+      let oneItem = estimatedKVSValueSize(of: [UUID().uuidString])
+      let baseOverhead = oneItem - perUUID
+      let maxByCount = maxDeletedIdsBytes >= baseOverhead
+        ? (maxDeletedIdsBytes - baseOverhead) / perUUID
+        : 0
+      let effectiveCap = min(cappedCount, maxByCount)
+      keptIds = Array(sortedIds.prefix(effectiveCap))
+    } else {
+      keptIds = Array(sortedIds.prefix(cappedCount))
     }
 
     let newSet = Set(keptIds)

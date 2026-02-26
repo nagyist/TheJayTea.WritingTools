@@ -15,7 +15,7 @@ struct writing_toolsApp: App {
         
         // Settings scene for the preferences window
         Settings {
-            SettingsView(appState: AppState.shared, showOnlyApiSetup: false)
+            SettingsView(appState: appState, showOnlyApiSetup: false)
         }
     }
 }

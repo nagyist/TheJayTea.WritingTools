@@ -11,6 +11,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var iCloudSyncObserver: NSObjectProtocol?
     private var iCloudQuotaObserver: NSObjectProtocol?
     private var clipboardRestoreObserver: NSObjectProtocol?
+    private var commandsChangedObserver: NSObjectProtocol?
     private var commandShortcutNamesById: [UUID: KeyboardShortcuts.Name] = [:]
     
     let appState = AppState.shared
@@ -45,12 +46,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupCommandShortcuts()
 
         // Register for command changes to update shortcuts
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(setupCommandShortcuts),
-            name: NSNotification.Name("CommandsChanged"),
-            object: nil
-        )
+        commandsChangedObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("CommandsChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.setupCommandShortcuts()
+            }
+        }
 
         configureCloudCommandSync(enabled: AppSettings.shared.enableICloudCommandSync)
         iCloudSyncObserver = NotificationCenter.default.addObserver(
@@ -98,7 +102,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    @objc private func setupCommandShortcuts() {
+    private func setupCommandShortcuts() {
         let commandsWithShortcuts = appState.commandManager.commands.filter(\.hasShortcut)
         let desiredIds = Set(commandsWithShortcuts.map(\.id))
         let registeredIds = Set(commandShortcutNamesById.keys)
@@ -254,6 +258,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             logger.info("No text or images selected for command: \(commandName)")
         case .emptyInstruction:
             logger.warning("Custom instruction execution failed due to empty instruction")
+        case .customProviderConfigurationIncomplete(let commandName, let missingFields):
+            logger.warning(
+                """
+                Custom provider configuration incomplete for command \(commandName). \
+                Missing fields: \(missingFields.joined(separator: ", "))
+                """
+            )
         }
     }
 

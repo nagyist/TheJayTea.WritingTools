@@ -25,6 +25,15 @@ struct CommandModel: Codable, Identifiable, Equatable {
     var customProviderBaseURL: String?
     var customProviderModel: String?
 
+    /// Effective formatting-preservation behavior used at execution time.
+    /// This is computed (non-persisted) and bridges legacy + structured prompt settings.
+    var effectivePreserveFormatting: Bool {
+        if preserveFormatting {
+            return true
+        }
+        return PromptStructure.from(jsonString: prompt)?.rules.preserveFormatting ?? false
+    }
+
     // MARK: – CodingKeys
 
     private enum CodingKeys: String, CodingKey {
@@ -164,21 +173,18 @@ struct CommandModel: Codable, Identifiable, Equatable {
         )
     }
 
-    static var defaultCommands: [CommandModel] {
-        return [
-            proofread,
-            rewrite,
-            friendly,
-            professional,
-            concise,
-            summary,
-            keyPoints,
-            table,
-        ]
-    }
+    static let defaultCommands: [CommandModel] = [
+        proofread,
+        rewrite,
+        friendly,
+        professional,
+        concise,
+        summary,
+        keyPoints,
+        table,
+    ]
 
-    static var proofread: CommandModel {
-        CommandModel(
+    static let proofread = CommandModel(
             id: BuiltInID.proofread,
             name: String(localized: "Proofread", comment: "ID for proofreading"),
             prompt: """
@@ -256,10 +262,8 @@ struct CommandModel: Codable, Identifiable, Equatable {
             hasShortcut: false,
             preserveFormatting: true
         )
-    }
 
-    static var rewrite: CommandModel {
-        CommandModel(
+    static let rewrite = CommandModel(
             id: BuiltInID.rewrite,
             name: String(localized: "Rewrite", comment: "ID for rewriting"),
             prompt: """
@@ -342,10 +346,8 @@ struct CommandModel: Codable, Identifiable, Equatable {
             isBuiltIn: true,
             hasShortcut: false
         )
-    }
 
-    static var friendly: CommandModel {
-        CommandModel(
+    static let friendly = CommandModel(
             id: BuiltInID.friendly,
             name: String(localized: "Friendly", comment: "ID for friendly tone"),
             prompt: """
@@ -420,10 +422,8 @@ struct CommandModel: Codable, Identifiable, Equatable {
             isBuiltIn: true,
             hasShortcut: false
         )
-    }
 
-    static var professional: CommandModel {
-        CommandModel(
+    static let professional = CommandModel(
             id: BuiltInID.professional,
             name: String(localized: "Professional", comment: "ID for professional tone"),
             prompt: """
@@ -498,10 +498,8 @@ struct CommandModel: Codable, Identifiable, Equatable {
             isBuiltIn: true,
             hasShortcut: false
         )
-    }
 
-    static var concise: CommandModel {
-        CommandModel(
+    static let concise = CommandModel(
             id: BuiltInID.concise,
             name: String(localized: "Concise", comment: "ID for concise tone"),
             prompt: """
@@ -584,10 +582,8 @@ struct CommandModel: Codable, Identifiable, Equatable {
             isBuiltIn: true,
             hasShortcut: false
         )
-    }
 
-    static var summary: CommandModel {
-        CommandModel(
+    static let summary = CommandModel(
             id: BuiltInID.summary,
             name: String(localized: "Summary", comment: "ID for summarization"),
             prompt: """
@@ -658,10 +654,8 @@ struct CommandModel: Codable, Identifiable, Equatable {
             isBuiltIn: true,
             hasShortcut: false
         )
-    }
 
-    static var keyPoints: CommandModel {
-        CommandModel(
+    static let keyPoints = CommandModel(
             id: BuiltInID.keyPoints,
             name: String(localized: "Key Points", comment: "ID for key points extraction"),
             prompt: """
@@ -735,10 +729,8 @@ struct CommandModel: Codable, Identifiable, Equatable {
             isBuiltIn: true,
             hasShortcut: false
         )
-    }
 
-    static var table: CommandModel {
-        CommandModel(
+    static let table = CommandModel(
             id: BuiltInID.table,
             name: String(localized: "Table", comment: "ID for table conversion"),
             prompt: """
@@ -810,5 +802,4 @@ struct CommandModel: Codable, Identifiable, Equatable {
             isBuiltIn: true,
             hasShortcut: false
         )
-    }
 }

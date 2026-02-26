@@ -34,6 +34,7 @@ enum GeminiModel: String, CaseIterable {
 final class GeminiProvider: AIProvider {
     var isProcessing = false
     private var config: GeminiConfig
+    private var activeTask: Task<Void, any Error>?
     
     init(config: GeminiConfig) {
         self.config = config
@@ -54,7 +55,7 @@ final class GeminiProvider: AIProvider {
 
         var parts: [GeminiGenerateContentRequestBody.Content.Part] = [.text(finalPrompt)]
         for imageData in images {
-            parts.append(.inline(data: imageData, mimeType: "image/jpeg"))
+            parts.append(.inline(data: imageData, mimeType: detectImageMIMEType(imageData)))
         }
 
         let requestBody = GeminiGenerateContentRequestBody(
@@ -103,6 +104,7 @@ final class GeminiProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
+            activeTask = nil
         }
 
         guard !config.apiKey.isEmpty else {
@@ -115,7 +117,7 @@ final class GeminiProvider: AIProvider {
 
         var parts: [GeminiGenerateContentRequestBody.Content.Part] = [.text(finalPrompt)]
         for imageData in images {
-            parts.append(.inline(data: imageData, mimeType: "image/jpeg"))
+            parts.append(.inline(data: imageData, mimeType: detectImageMIMEType(imageData)))
         }
 
         let requestBody = GeminiGenerateContentRequestBody(
@@ -129,7 +131,8 @@ final class GeminiProvider: AIProvider {
             ]
         )
 
-        do {
+        // Wrap work in a stored task so cancel() can interrupt it
+        let streamTask = Task { @MainActor in
             let stream = try await geminiService.generateStreamingContentRequest(
                 body: requestBody,
                 model: config.modelName,
@@ -143,6 +146,11 @@ final class GeminiProvider: AIProvider {
                     }
                 }
             }
+        }
+        activeTask = streamTask
+
+        do {
+            try await streamTask.value
         } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
             logger.error("Gemini streaming error (\(statusCode)): \(responseBody)")
             throw NSError(domain: "GeminiAPI", code: statusCode,
@@ -154,6 +162,32 @@ final class GeminiProvider: AIProvider {
     }
 
     func cancel() {
+        activeTask?.cancel()
+        activeTask = nil
         isProcessing = false
+    }
+
+    private func runWithCancellationRelay<T>(
+        _ operation: @escaping @MainActor () async throws -> T
+    ) async throws -> T {
+        let operationTask = Task { @MainActor in
+            try await operation()
+        }
+        activeTask = Task { [operationTask] in
+            await withTaskCancellationHandler {
+                _ = try? await operationTask.value
+            } onCancel: {
+                operationTask.cancel()
+            }
+        }
+
+        do {
+            let value = try await operationTask.value
+            activeTask = nil
+            return value
+        } catch {
+            activeTask = nil
+            throw error
+        }
     }
 }

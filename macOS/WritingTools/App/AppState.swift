@@ -90,22 +90,27 @@ final class AppState {
         // Handle custom provider
         if providerName == "custom" {
             logger.debug("AppState.getProvider: Custom provider selected")
-            let apiKey = KeychainManager.shared.retrieveCustomProviderApiKeySync(for: command.id)
-            if let baseURL = command.customProviderBaseURL,
-               let apiKey,
-               let model = command.customProviderModel {
-                logger.debug("AppState.getProvider: Creating CustomProvider with baseURL=\(baseURL), model=\(model)")
-                let config = CustomProviderConfig(
-                    baseURL: baseURL,
-                    apiKey: apiKey,
-                    model: model
+            let baseURL = command.customProviderBaseURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let apiKey =
+                KeychainManager.shared.retrieveCustomProviderApiKeySync(for: command.id)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let model = command.customProviderModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            if baseURL.isEmpty || apiKey.isEmpty || model.isEmpty {
+                logger.warning(
+                    """
+                    AppState.getProvider: Custom provider config incomplete - baseURL=\(baseURL.isEmpty ? "empty" : "set"), \
+                    apiKey=\(apiKey.isEmpty ? "empty" : "set"), model=\(model.isEmpty ? "empty" : "set")
+                    """
                 )
-                return CustomProvider(config: config)
-            } else {
-                logger.warning("AppState.getProvider: Custom provider config incomplete - baseURL=\(command.customProviderBaseURL ?? "nil"), apiKey=\(apiKey != nil ? "set" : "nil"), model=\(command.customProviderModel ?? "nil")")
             }
-            // Fallback to active provider if custom config is incomplete
-            return activeProvider
+
+            let config = CustomProviderConfig(
+                baseURL: baseURL,
+                apiKey: apiKey,
+                model: model
+            )
+            return CustomProvider(config: config)
         }
 
         // If there's a model override, create a temporary provider instance with that model
@@ -581,11 +586,17 @@ final class AppState {
             self.simulatePaste()
 
             // Wait for the paste to complete before restoring the clipboard.
-            // 250ms accommodates slower apps (e.g. Electron, heavy IDEs).
+            // There is no cross-process API to detect when a paste finishes, so we
+            // use a conservative fixed delay. 500ms accommodates slower apps
+            // (e.g. Electron, heavy IDEs) better than the previous 250ms while
+            // still feeling responsive.  If this task is cancelled (e.g. the user
+            // triggers another action) we skip the restore entirely so we don't
+            // clobber the new clipboard content.
             do {
-                try await Task.sleep(for: .milliseconds(250))
+                try await Task.sleep(for: .milliseconds(500))
             } catch {
                 logger.debug("Paste delay interrupted: \(error.localizedDescription)")
+                return  // Don't restore — cancellation means the flow was superseded
             }
 
             // Restore the original clipboard content, but only if no external
@@ -791,11 +802,11 @@ final class AppState {
         let alert = NSAlert()
         alert.messageText = "Clipboard Was Updated by Another App"
         let appName = targetApp.localizedName ?? targetApp.bundleIdentifier ?? "the target app"
+        logger.info("Clipboard restore skipped: expected change count \(expectedChangeCount), actual \(actualChangeCount)")
         alert.informativeText =
             """
             Writing Tools pasted into \(appName), but your clipboard changed before restoration.
             Your clipboard was intentionally left unchanged to avoid overwriting newer content.
-            (Expected change count: \(expectedChangeCount), actual: \(actualChangeCount))
             """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")

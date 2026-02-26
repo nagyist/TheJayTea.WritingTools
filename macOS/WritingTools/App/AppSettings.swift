@@ -21,9 +21,9 @@ final class AppSettings {
     
     
     // MARK: - Published Settings
-    var themeStyle: String {
+    var themeStyle: AppTheme {
         didSet {
-            defaults.set(themeStyle, forKey: "theme_style")
+            defaults.set(themeStyle.rawValue, forKey: "theme_style")
         }
     }
     
@@ -79,7 +79,7 @@ final class AppSettings {
     }
     
     var useGradientTheme: Bool {
-        themeStyle != "standard"
+        themeStyle != .standard
     }
     
     // MARK: - HotKey data
@@ -188,7 +188,7 @@ final class AppSettings {
         }
 
         // Initialize the theme style first.
-        self.themeStyle = defaults.string(forKey: "theme_style") ?? "gradient"
+        self.themeStyle = AppTheme(rawValue: defaults.string(forKey: "theme_style") ?? "gradient") ?? .gradient
         
         // Load API Keys from Keychain (post-migration) using synchronous bootstrap read
         self.geminiApiKey = keychain.bootstrapRetrieve(forKey: "gemini_api_key") ?? ""

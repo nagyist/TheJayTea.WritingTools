@@ -33,6 +33,7 @@ final class AnthropicProvider: AIProvider {
     var isProcessing = false
     
     private var config: AnthropicConfig
+    private var activeTask: Task<Void, any Error>?
     
     init(config: AnthropicConfig) {
         self.config = config
@@ -66,7 +67,7 @@ final class AnthropicProvider: AIProvider {
         for imageData in images {
             let source = AnthropicImageBlockParamSource.base64(
                 data: imageData.base64EncodedString(),
-                mediaType: .jpeg
+                mediaType: detectAnthropicMediaType(imageData)
             )
             contentBlocks.append(.imageBlock(.init(source: source)))
         }
@@ -112,10 +113,12 @@ final class AnthropicProvider: AIProvider {
                 }
             } else {
                 try Task.checkCancellation()
-                let response = try await anthropicService.messageRequest(
-                    body: requestBody,
-                    secondsToWait: 60
-                )
+                let response = try await withRetry {
+                    try await anthropicService.messageRequest(
+                        body: requestBody,
+                        secondsToWait: 60
+                    )
+                }
                 var compiledResponse = ""
 
                 for content in response.content {
@@ -163,6 +166,7 @@ final class AnthropicProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
+            activeTask = nil
         }
 
         guard !config.apiKey.isEmpty else {
@@ -179,7 +183,7 @@ final class AnthropicProvider: AIProvider {
         for imageData in images {
             let source = AnthropicImageBlockParamSource.base64(
                 data: imageData.base64EncodedString(),
-                mediaType: .jpeg
+                mediaType: detectAnthropicMediaType(imageData)
             )
             contentBlocks.append(.imageBlock(.init(source: source)))
         }
@@ -191,7 +195,8 @@ final class AnthropicProvider: AIProvider {
             system: systemPrompt.map(AnthropicSystemPrompt.text)
         )
 
-        do {
+        // Wrap work in a stored task so cancel() can interrupt it
+        let streamTask = Task { @MainActor in
             let stream = try await anthropicService.streamingMessageRequest(
                 body: requestBody,
                 secondsToWait: 60
@@ -206,6 +211,11 @@ final class AnthropicProvider: AIProvider {
                     continue
                 }
             }
+        }
+        activeTask = streamTask
+
+        do {
+            try await streamTask.value
         } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
             logger.error("Anthropic streaming error (\(statusCode)): \(responseBody)")
             throw NSError(domain: "AnthropicAPI", code: statusCode,
@@ -217,6 +227,8 @@ final class AnthropicProvider: AIProvider {
     }
 
     func cancel() {
+        activeTask?.cancel()
+        activeTask = nil
         isProcessing = false
     }
 }

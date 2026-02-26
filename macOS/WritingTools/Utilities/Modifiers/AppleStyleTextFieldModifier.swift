@@ -39,19 +39,20 @@ struct AppleStyleTextFieldModifier: ViewModifier {
                         .foregroundStyle(.white)
                         .font(.system(size: 12))
                         .frame(width: 24, height: 24)
-                        .background(Color.blue)
+                        .background(isLoading ? Color.gray : Color.blue)
                         .clipShape(.circle)
                         .scaleEffect(isHovered ? 1.05 : 1.0)
                         .opacity(isHovered ? 1.0 : 0.9)
                 }
                 .buttonStyle(.plain)
+                .disabled(isLoading)
                 .padding(.trailing, 8)
                 .transition(.opacity)
                 .onHover { hovering in
                     isHovered = hovering
                 }
-                .help("Send message")
-                .accessibilityLabel("Send message")
+                .help(isLoading ? "Processing…" : "Send message")
+                .accessibilityLabel(isLoading ? "Processing" : "Send message")
             }
         }
         .frame(height: 36)

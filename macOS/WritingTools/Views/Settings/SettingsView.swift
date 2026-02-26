@@ -129,7 +129,7 @@ struct SettingsView: View {
     
     private var saveButton: some View {
         HStack(spacing: 8) {
-            Text("Changes apply automatically")
+            Text("Most changes apply automatically. Click Done to apply API key updates.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()

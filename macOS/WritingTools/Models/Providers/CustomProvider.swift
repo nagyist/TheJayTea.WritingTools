@@ -15,6 +15,7 @@ final class CustomProvider: AIProvider {
     var isProcessing: Bool = false
 
     private let config: CustomProviderConfig
+    private var activeTask: Task<Void, Never>?
 
     init(config: CustomProviderConfig) {
         self.config = config
@@ -42,52 +43,8 @@ final class CustomProvider: AIProvider {
         }
 
         let config = self.config
-
-        guard !config.baseURL.isEmpty else {
-            throw CustomProviderError.invalidConfiguration("Base URL is required")
-        }
-        guard !config.apiKey.isEmpty else {
-            throw CustomProviderError.invalidConfiguration("API Key is required")
-        }
-        guard !config.model.isEmpty else {
-            throw CustomProviderError.invalidConfiguration("Model is required")
-        }
-
-        guard var urlComponents = URLComponents(string: config.baseURL) else {
-            throw CustomProviderError.invalidConfiguration("Invalid Base URL format")
-        }
-        if !urlComponents.path.hasSuffix("/chat/completions") {
-            if urlComponents.path.isEmpty || urlComponents.path == "/" {
-                urlComponents.path = "/v1/chat/completions"
-            } else if !urlComponents.path.contains("/chat/completions") {
-                urlComponents.path += "/chat/completions"
-            }
-        }
-        guard let url = urlComponents.url else {
-            throw CustomProviderError.invalidConfiguration("Could not construct valid URL")
-        }
-
-        var messages: [[String: Any]] = []
-        if let systemPrompt = systemPrompt, !systemPrompt.isEmpty {
-            messages.append(["role": "system", "content": systemPrompt])
-        }
-
-        // Include images in streaming requests (OpenAI vision format)
-        if !images.isEmpty {
-            var contentParts: [[String: Any]] = [
-                ["type": "text", "text": userPrompt]
-            ]
-            for imageData in images {
-                let base64 = imageData.base64EncodedString()
-                contentParts.append([
-                    "type": "image_url",
-                    "image_url": ["url": "data:image/png;base64,\(base64)"]
-                ])
-            }
-            messages.append(["role": "user", "content": contentParts])
-        } else {
-            messages.append(["role": "user", "content": userPrompt])
-        }
+        let url = try Self.buildEndpointURL(from: config)
+        let messages = Self.buildMessages(systemPrompt: systemPrompt, userPrompt: userPrompt, images: images)
 
         let requestBody: [String: Any] = [
             "model": config.model,
@@ -135,7 +92,70 @@ final class CustomProvider: AIProvider {
     }
 
     func cancel() {
+        activeTask?.cancel()
+        activeTask = nil
         isProcessing = false
+    }
+
+    /// Validates the provider config and builds the chat completions endpoint URL.
+    nonisolated private static func buildEndpointURL(from config: CustomProviderConfig) throws -> URL {
+        guard !config.baseURL.isEmpty else {
+            throw CustomProviderError.invalidConfiguration("Base URL is required")
+        }
+        guard !config.apiKey.isEmpty else {
+            throw CustomProviderError.invalidConfiguration("API Key is required")
+        }
+        guard !config.model.isEmpty else {
+            throw CustomProviderError.invalidConfiguration("Model is required")
+        }
+
+        guard var urlComponents = URLComponents(string: config.baseURL) else {
+            throw CustomProviderError.invalidConfiguration("Invalid Base URL format")
+        }
+        if !urlComponents.path.hasSuffix("/chat/completions") {
+            if urlComponents.path.isEmpty || urlComponents.path == "/" {
+                urlComponents.path = "/v1/chat/completions"
+            } else if !urlComponents.path.contains("/chat/completions") {
+                // Strip trailing slash to avoid double-slash (e.g. "/v1/" + "/chat/completions")
+                if urlComponents.path.hasSuffix("/") {
+                    urlComponents.path = String(urlComponents.path.dropLast())
+                }
+                urlComponents.path += "/chat/completions"
+            }
+        }
+        guard let url = urlComponents.url else {
+            throw CustomProviderError.invalidConfiguration("Could not construct valid URL")
+        }
+        return url
+    }
+
+    /// Builds the messages array for an OpenAI-compatible chat request.
+    nonisolated private static func buildMessages(
+        systemPrompt: String?,
+        userPrompt: String,
+        images: [Data]
+    ) -> [[String: Any]] {
+        var messages: [[String: Any]] = []
+        if let systemPrompt, !systemPrompt.isEmpty {
+            messages.append(["role": "system", "content": systemPrompt])
+        }
+        if !images.isEmpty {
+            var contentParts: [[String: Any]] = [
+                ["type": "text", "text": userPrompt]
+            ]
+            for imageData in images {
+                let base64 = imageData.base64EncodedString()
+                let mimeType = detectImageMIMEType(imageData)
+                contentParts.append([
+                    "type": "image_url",
+                    "image_url": ["url": "data:\(mimeType);base64,\(base64)"]
+                ])
+            }
+            messages.append(["role": "user", "content": contentParts])
+        } else {
+            messages.append(["role": "user", "content": userPrompt])
+        }
+        return messages
     }
 
     nonisolated private static func performRequest(
@@ -146,80 +166,16 @@ final class CustomProvider: AIProvider {
     ) async throws -> String {
         logger.debug("CustomProvider: Starting request with baseURL=\(config.baseURL), model=\(config.model)")
 
-        // Validate configuration
-        guard !config.baseURL.isEmpty else {
-            throw CustomProviderError.invalidConfiguration("Base URL is required")
-        }
-
-        guard !config.apiKey.isEmpty else {
-            throw CustomProviderError.invalidConfiguration("API Key is required")
-        }
-
-        guard !config.model.isEmpty else {
-            throw CustomProviderError.invalidConfiguration("Model is required")
-        }
-
-        // Prepare the URL
-        guard var urlComponents = URLComponents(string: config.baseURL) else {
-            throw CustomProviderError.invalidConfiguration("Invalid Base URL format")
-        }
-
-        // Ensure the path ends with /chat/completions if not already present
-        if !urlComponents.path.hasSuffix("/chat/completions") {
-            if urlComponents.path.isEmpty || urlComponents.path == "/" {
-                urlComponents.path = "/v1/chat/completions"
-            } else if !urlComponents.path.contains("/chat/completions") {
-                urlComponents.path += "/chat/completions"
-            }
-        }
-
-        guard let url = urlComponents.url else {
-            throw CustomProviderError.invalidConfiguration("Could not construct valid URL")
-        }
-
+        let url = try buildEndpointURL(from: config)
         logger.debug("CustomProvider: Using URL: \(url.absoluteString)")
 
-        // Prepare the request
         var requestBuilder = URLRequest(url: url)
         requestBuilder.httpMethod = "POST"
         requestBuilder.setValue("application/json", forHTTPHeaderField: "Content-Type")
         requestBuilder.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         requestBuilder.timeoutInterval = 60
 
-        // Build messages array
-        var messages: [[String: Any]] = []
-
-        if let systemPrompt = systemPrompt, !systemPrompt.isEmpty {
-            messages.append([
-                "role": "system",
-                "content": systemPrompt
-            ])
-        }
-
-        // Build user message content - include images as base64 if provided (OpenAI vision format)
-        if !images.isEmpty {
-            var contentParts: [[String: Any]] = [
-                ["type": "text", "text": userPrompt]
-            ]
-            for imageData in images {
-                let base64 = imageData.base64EncodedString()
-                contentParts.append([
-                    "type": "image_url",
-                    "image_url": ["url": "data:image/png;base64,\(base64)"]
-                ])
-            }
-            messages.append([
-                "role": "user",
-                "content": contentParts
-            ])
-        } else {
-            messages.append([
-                "role": "user",
-                "content": userPrompt
-            ])
-        }
-
-        // Prepare request body
+        let messages = buildMessages(systemPrompt: systemPrompt, userPrompt: userPrompt, images: images)
         let requestBody: [String: Any] = [
             "model": config.model,
             "messages": messages,

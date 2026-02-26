@@ -35,6 +35,7 @@ final class OpenRouterProvider: AIProvider {
     var isProcessing = false
     
     private var config: OpenRouterConfig
+    private var activeTask: Task<Void, Never>?
     
     init(config: OpenRouterConfig) {
         self.config = config
@@ -101,7 +102,9 @@ final class OpenRouterProvider: AIProvider {
                 return compiledResponse
             } else {
                 try Task.checkCancellation()
-                let response = try await openRouterService.chatCompletionRequest(body: requestBody)
+                let response = try await withRetry {
+                    try await openRouterService.chatCompletionRequest(body: requestBody)
+                }
                 return response.choices.first?.message.content ?? ""
             }
         } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
@@ -180,6 +183,8 @@ final class OpenRouterProvider: AIProvider {
     }
 
     func cancel() {
+        activeTask?.cancel()
+        activeTask = nil
         isProcessing = false
     }
 }

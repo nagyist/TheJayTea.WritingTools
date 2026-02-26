@@ -32,6 +32,7 @@ enum OpenAIModel: String, CaseIterable {
 final class OpenAIProvider: AIProvider {
     var isProcessing = false
     private var config: OpenAIConfig
+    private var activeTask: Task<Void, Never>?
     
     init(config: OpenAIConfig) {
         self.config = config
@@ -71,7 +72,8 @@ final class OpenAIProvider: AIProvider {
             var parts: [OpenAIChatCompletionRequestBody.Message.ContentPart] = [.text(userPrompt)]
 
             for imageData in images {
-                let dataString = "data:image/jpeg;base64," + imageData.base64EncodedString()
+                let mimeType = detectImageMIMEType(imageData)
+                let dataString = "data:\(mimeType);base64," + imageData.base64EncodedString()
                 if let dataURL = URL(string: dataString) {
                     parts.append(.imageURL(dataURL, detail: .auto))
                 }
@@ -98,10 +100,13 @@ final class OpenAIProvider: AIProvider {
 
             } else {
                 try Task.checkCancellation()
-                let response = try await openAIService.chatCompletionRequest(body: .init(
-                    model: config.model,
-                    messages: messages
-                ), secondsToWait: 60)
+                let requestMessages = messages
+                let response = try await withRetry {
+                    try await openAIService.chatCompletionRequest(body: .init(
+                        model: config.model,
+                        messages: requestMessages
+                    ), secondsToWait: 60)
+                }
 
                 return response.choices.first?.message.content ?? ""
             }
@@ -156,10 +161,11 @@ final class OpenAIProvider: AIProvider {
             
             for imageData in images {
                 let base64 = imageData.base64EncodedString()
+                let mimeType = detectImageMIMEType(imageData)
                 content.append([
                     "type": "image_url",
                     "image_url": [
-                        "url": "data:image/jpeg;base64,\(base64)"
+                        "url": "data:\(mimeType);base64,\(base64)"
                     ]
                 ])
             }
@@ -207,7 +213,94 @@ final class OpenAIProvider: AIProvider {
     }
 
     
+    // MARK: - Custom Streaming Request Implementation
+    
+    private static func performCustomOpenAIStreamingRequest(
+        config: OpenAIConfig,
+        systemPrompt: String?,
+        userPrompt: String,
+        images: [Data],
+        onChunk: @escaping @Sendable @MainActor (String) -> Void
+    ) async throws {
+        var urlString = config.baseURL
+        if urlString.hasSuffix("/") {
+            urlString = String(urlString.dropLast())
+        }
+        if !urlString.hasSuffix("/chat/completions") {
+            urlString += "/chat/completions"
+        }
+        
+        guard let url = URL(string: urlString) else {
+            throw NSError(domain: "OpenAIAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid Base URL."])
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60
+        
+        var messages: [[String: Any]] = []
+        if let systemPrompt = systemPrompt {
+            messages.append(["role": "system", "content": systemPrompt])
+        }
+        
+        if images.isEmpty {
+            messages.append(["role": "user", "content": userPrompt])
+        } else {
+            var content: [[String: Any]] = [
+                ["type": "text", "text": userPrompt]
+            ]
+            for imageData in images {
+                let base64 = imageData.base64EncodedString()
+                let mimeType = detectImageMIMEType(imageData)
+                content.append([
+                    "type": "image_url",
+                    "image_url": ["url": "data:\(mimeType);base64,\(base64)"]
+                ])
+            }
+            messages.append(["role": "user", "content": content])
+        }
+        
+        let body: [String: Any] = [
+            "model": config.model,
+            "messages": messages,
+            "stream": true
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (stream, response) = try await URLSession.shared.bytes(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "OpenAIAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response type."])
+        }
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            var data = Data()
+            for try await byte in stream { data.append(byte) }
+            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+            logger.error("Custom OpenAI Streaming Request Failed: \(httpResponse.statusCode) - \(errorBody)")
+            throw NSError(domain: "OpenAIAPI", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "API Error: \(errorBody)"])
+        }
+        
+        for try await line in stream.lines {
+            try Task.checkCancellation()
+            guard line.hasPrefix("data: ") else { continue }
+            let jsonStr = String(line.dropFirst(6))
+            if jsonStr.trimmingCharacters(in: .whitespaces) == "[DONE]" { break }
+            guard let data = jsonStr.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = json["choices"] as? [[String: Any]],
+                  let delta = choices.first?["delta"] as? [String: Any],
+                  let content = delta["content"] as? String else { continue }
+            onChunk(content)
+        }
+    }
+
     func cancel() {
+        activeTask?.cancel()
+        activeTask = nil
         isProcessing = false
     }
     
@@ -228,15 +321,15 @@ final class OpenAIProvider: AIProvider {
             throw NSError(domain: "OpenAIAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "API key is missing."])
         }
         
-        // For custom base URLs, fall back to non-streaming
+        // For custom base URLs, use manual SSE streaming
         if !config.baseURL.isEmpty && config.baseURL != OpenAIConfig.defaultBaseURL {
-            let result = try await Self.performCustomOpenAIRequest(
+            try await Self.performCustomOpenAIStreamingRequest(
                 config: config,
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
-                images: images
+                images: images,
+                onChunk: onChunk
             )
-            onChunk(result)
             return
         }
         
@@ -259,7 +352,8 @@ final class OpenAIProvider: AIProvider {
             var parts: [OpenAIChatCompletionRequestBody.Message.ContentPart] = [.text(userPrompt)]
             
             for imageData in images {
-                let dataString = "data:image/jpeg;base64," + imageData.base64EncodedString()
+                let mimeType = detectImageMIMEType(imageData)
+                let dataString = "data:\(mimeType);base64," + imageData.base64EncodedString()
                 if let dataURL = URL(string: dataString) {
                     parts.append(.imageURL(dataURL, detail: .auto))
                 }

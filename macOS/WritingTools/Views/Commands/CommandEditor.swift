@@ -18,7 +18,6 @@ struct CommandEditor: View {
     @State private var useResponseWindow: Bool
     @State private var hasShortcut: Bool
     @State private var showingIconPicker = false
-    @State private var isNameDuplicate = false
     @State private var showDuplicateAlert = false
 
     // Per-command AI provider configuration
@@ -30,6 +29,9 @@ struct CommandEditor: View {
     @State private var customProviderBaseURL: String
     @State private var customProviderApiKey: String
     @State private var customProviderModel: String
+    @State private var customProviderBaseURLError: String?
+    @State private var customProviderApiKeyError: String?
+    @State private var customProviderModelError: String?
 
     // Reference to command manager for duplicate checking
     private var commandManager: CommandManager?
@@ -233,6 +235,12 @@ struct CommandEditor: View {
                                     TextField("e.g., https://api.example.com/v1", text: $customProviderBaseURL)
                                         .textFieldStyle(.roundedBorder)
                                 }
+                                if let customProviderBaseURLError {
+                                    Text(customProviderBaseURLError)
+                                        .font(.caption)
+                                        .foregroundStyle(.red)
+                                        .padding(.leading, 92)
+                                }
                                 Text("The base URL of your API endpoint (e.g., https://api.openai.com/v1)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -244,6 +252,12 @@ struct CommandEditor: View {
                                     SecureField("Your API key", text: $customProviderApiKey)
                                         .textFieldStyle(.roundedBorder)
                                 }
+                                if let customProviderApiKeyError {
+                                    Text(customProviderApiKeyError)
+                                        .font(.caption)
+                                        .foregroundStyle(.red)
+                                        .padding(.leading, 92)
+                                }
                                 Text("Your API authentication key")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -254,6 +268,12 @@ struct CommandEditor: View {
                                         .frame(width: 80, alignment: .leading)
                                     TextField("e.g., gpt-4o-mini", text: $customProviderModel)
                                         .textFieldStyle(.roundedBorder)
+                                }
+                                if let customProviderModelError {
+                                    Text(customProviderModelError)
+                                        .font(.caption)
+                                        .foregroundStyle(.red)
+                                        .padding(.leading, 92)
                                 }
                                 Text("The model identifier to use")
                                     .font(.caption)
@@ -301,26 +321,29 @@ struct CommandEditor: View {
     // MARK: - Save Command
 
     private func saveCommand() {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = Self.trimmedNameForSave(name)
+        guard !trimmedName.isEmpty else { return }
+
+        clearCustomProviderValidationErrors()
+        guard validateCustomProviderFieldsIfNeeded() else { return }
+        let normalizedTrimmedName = Self.normalizedCommandName(trimmedName)
 
         // Check for duplicate command names (excluding the current command)
-        if let manager = commandManager {
-            let isDuplicate = manager.commands.contains { existingCommand in
-                existingCommand.id != command.id &&
-                existingCommand.name.lowercased() == trimmedName.lowercased()
-            }
-
-            if isDuplicate {
+        if let manager = commandManager,
+           Self.hasDuplicateName(
+            normalizedCandidateName: normalizedTrimmedName,
+            currentCommandID: command.id,
+            existingCommands: manager.commands
+           ) {
                 showDuplicateAlert = true
                 return
-            }
         }
 
         if !hasShortcut {
             KeyboardShortcuts.reset(.commandShortcut(for: command.id))
         }
         var updatedCommand = command
-        updatedCommand.name = name
+        updatedCommand.name = trimmedName
         updatedCommand.prompt = prompt
         updatedCommand.icon = selectedIcon
         updatedCommand.useResponseWindow = useResponseWindow
@@ -338,8 +361,8 @@ struct CommandEditor: View {
                 let trimmedApiKey = customProviderApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
                 let trimmedModel = customProviderModel.trimmingCharacters(in: .whitespacesAndNewlines)
 
-                updatedCommand.customProviderBaseURL = trimmedBaseURL.isEmpty ? nil : trimmedBaseURL
-                updatedCommand.customProviderModel = trimmedModel.isEmpty ? nil : trimmedModel
+                updatedCommand.customProviderBaseURL = trimmedBaseURL
+                updatedCommand.customProviderModel = trimmedModel
                 updatedCommand.modelOverride = nil
 
                 logger.debug("CommandEditor: Saving custom provider - baseURL=\(trimmedBaseURL), apiKey=\(trimmedApiKey.isEmpty ? "empty" : "set"), model=\(trimmedModel)")
@@ -361,5 +384,58 @@ struct CommandEditor: View {
 
         command = updatedCommand
         onSave()
+    }
+
+    static func normalizedCommandName(_ value: String) -> String {
+        trimmedNameForSave(value)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    static func trimmedNameForSave(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func hasDuplicateName(
+        normalizedCandidateName: String,
+        currentCommandID: UUID,
+        existingCommands: [CommandModel]
+    ) -> Bool {
+        existingCommands.contains { existingCommand in
+            existingCommand.id != currentCommandID
+            && normalizedCommandName(existingCommand.name) == normalizedCandidateName
+        }
+    }
+
+    private func clearCustomProviderValidationErrors() {
+        customProviderBaseURLError = nil
+        customProviderApiKeyError = nil
+        customProviderModelError = nil
+    }
+
+    private func validateCustomProviderFieldsIfNeeded() -> Bool {
+        guard useCustomProvider, selectedProvider == "custom" else { return true }
+
+        let trimmedBaseURL = customProviderBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedApiKey = customProviderApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModel = customProviderModel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var hasValidationError = false
+        if trimmedBaseURL.isEmpty {
+            customProviderBaseURLError = "Base URL is required."
+            hasValidationError = true
+        }
+        if trimmedApiKey.isEmpty {
+            customProviderApiKeyError = "API key is required."
+            hasValidationError = true
+        }
+        if trimmedModel.isEmpty {
+            customProviderModelError = "Model is required."
+            hasValidationError = true
+        }
+
+        return !hasValidationError
     }
 }

@@ -2,12 +2,15 @@ import Foundation
 import Observation
 import SwiftUI
 
+private let logger = AppLogger.logger("CommandManager")
+
 @MainActor
 @Observable
 final class CommandManager {
     private(set) var commands: [CommandModel] = []
-    
+
     private let saveKey = "unified_commands"
+    private let backupKey = "unified_commands_backup"
     private let hasInitializedKey = "has_initialized_commands"
     private let deletedDefaultsKey = "deleted_default_commands"
     
@@ -91,22 +94,37 @@ final class CommandManager {
         }
         
         // Normal load
-        if let data = UserDefaults.standard.data(forKey: saveKey),
-           let decoded = try? JSONDecoder().decode([CommandModel].self, from: data) {
-            self.commands = decoded
-            if containsLegacyCustomProviderKey(in: data) {
-                saveCommands()
-                notifyCommandsChanged()
+        if let data = UserDefaults.standard.data(forKey: saveKey) {
+            do {
+                let decoded = try JSONDecoder().decode([CommandModel].self, from: data)
+                self.commands = decoded
+                if containsLegacyCustomProviderKey(in: data) {
+                    saveCommands()
+                    notifyCommandsChanged()
+                }
+            } catch {
+                logger.error("Failed to decode saved commands: \(error.localizedDescription). Backing up corrupted data and resetting to defaults.")
+                // Preserve corrupted data for potential recovery
+                UserDefaults.standard.set(data, forKey: backupKey)
+                initializeDefaultCommands()
+                // Post a notification so the UI can alert the user
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("CommandsLoadFailed"),
+                    object: nil
+                )
             }
         } else {
-            // Fallback if something went wrong with loading
+            // No saved data at all — initialize defaults
             initializeDefaultCommands()
         }
     }
     
     private func saveCommands() {
-        if let encoded = try? JSONEncoder().encode(commands) {
+        do {
+            let encoded = try JSONEncoder().encode(commands)
             UserDefaults.standard.set(encoded, forKey: saveKey)
+        } catch {
+            logger.error("Failed to encode commands for saving: \(error.localizedDescription)")
         }
     }
     
@@ -186,10 +204,10 @@ final class CommandManager {
         // 3. Newly converted custom commands from the legacy system
         self.commands = defaultCmds + existingCustom + convertedCustom
         
-        // Remove duplicates (by name) while preserving insertion order
-        var seenNames = Set<String>()
+        // Remove duplicates (by ID) while preserving insertion order
+        var seenIds = Set<UUID>()
         self.commands = self.commands.filter { command in
-            seenNames.insert(command.name).inserted
+            seenIds.insert(command.id).inserted
         }
         saveCommands()
         notifyCommandsChanged()

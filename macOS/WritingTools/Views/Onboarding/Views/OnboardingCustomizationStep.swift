@@ -37,10 +37,9 @@ struct OnboardingCustomizationStep: View {
             .foregroundStyle(.secondary)
 
           Picker("Theme", selection: $settings.themeStyle) {
-            Text("Standard").tag("standard")
-            Text("Gradient").tag("gradient")
-            Text("Glass").tag("glass")
-            Text("OLED").tag("oled")
+            ForEach(AppTheme.allCases, id: \.self) { theme in
+              Text(theme.displayName).tag(theme)
+            }
           }
           .pickerStyle(.segmented)
         }

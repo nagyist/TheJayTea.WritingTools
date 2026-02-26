@@ -39,7 +39,7 @@ struct LocalLLMSettingsView: View {
             Button("Delete \(modelType.displayName)") {
                 Task {
                     do {
-                        try llmProvider.deleteModel()
+                        try await llmProvider.deleteModel()
                     } catch {
                         llmProvider.lastError = "Failed to delete \(modelType.displayName): \(error.localizedDescription)"
                     }

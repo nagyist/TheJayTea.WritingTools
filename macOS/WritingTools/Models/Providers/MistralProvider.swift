@@ -31,6 +31,7 @@ enum MistralModel: String, CaseIterable {
 final class MistralProvider: AIProvider {
     var isProcessing = false
     private var config: MistralConfig
+    private var activeTask: Task<Void, any Error>?
     
     init(config: MistralConfig) {
         self.config = config
@@ -86,10 +87,13 @@ final class MistralProvider: AIProvider {
 
             } else {
                 try Task.checkCancellation()
-                let response = try await mistralService.chatCompletionRequest(body: .init(
-                    messages: messages,
-                    model: config.model
-                ), secondsToWait: 60)
+                let requestMessages = messages
+                let response = try await withRetry {
+                    try await mistralService.chatCompletionRequest(body: .init(
+                        messages: requestMessages,
+                        model: config.model
+                    ), secondsToWait: 60)
+                }
 
                 return response.choices.first?.message.content ?? ""
             }
@@ -114,6 +118,7 @@ final class MistralProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
+            activeTask = nil
         }
 
         guard !config.apiKey.isEmpty else {
@@ -137,7 +142,8 @@ final class MistralProvider: AIProvider {
         }
         messages.append(.user(content: combinedPrompt))
 
-        do {
+        // Wrap work in a stored task so cancel() can interrupt it
+        let streamTask = Task { @MainActor in
             let stream = try await mistralService.streamingChatCompletionRequest(body: .init(
                 messages: messages,
                 model: config.model
@@ -149,6 +155,11 @@ final class MistralProvider: AIProvider {
                     onChunk(content)
                 }
             }
+        }
+        activeTask = streamTask
+
+        do {
+            try await streamTask.value
         } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
             logger.error("Mistral streaming error (\(statusCode)): \(responseBody)")
             throw NSError(domain: "MistralAPI", code: statusCode,
@@ -160,6 +171,8 @@ final class MistralProvider: AIProvider {
     }
 
     func cancel() {
+        activeTask?.cancel()
+        activeTask = nil
         isProcessing = false
     }
 }

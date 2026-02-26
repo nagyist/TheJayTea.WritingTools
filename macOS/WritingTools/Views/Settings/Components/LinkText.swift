@@ -6,23 +6,17 @@
 //
 
 import SwiftUI
-import AppKit
 
 struct LinkText: View {
+    private static let githubURL = URL(string: "https://github.com/theJayTea/WritingTools?tab=readme-ov-file#-optional-ollama-local-llm-instructions")!
+
     var body: some View {
         HStack(spacing: 4) {
             Text("Local LLMs: use the instructions on")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("GitHub Page.")
+            Link("GitHub Page.", destination: Self.githubURL)
                 .font(.caption)
-                .foregroundStyle(.blue)
-                .underline()
-                .onTapGesture {
-                    if let url = URL(string: "https://github.com/theJayTea/WritingTools?tab=readme-ov-file#-optional-ollama-local-llm-instructions") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
         }
     }
 }

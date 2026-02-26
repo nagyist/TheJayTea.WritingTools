@@ -15,18 +15,26 @@ class MigrationHelper {
         return UserDefaults.standard.bool(forKey: migrationCompletedKey)
     }
     
-    /// Performs migration from the old system to the new CommandManager system
+    /// Performs migration from the old system to the new CommandManager system.
+    /// Only marks migration as complete if `migrateFromLegacySystems` succeeds
+    /// (i.e. does not throw or crash). If the app is killed mid-migration the
+    /// flag will remain false and migration will be re-attempted on next launch.
     func migrateIfNeeded(commandManager: CommandManager, customCommandsManager: CustomCommandsManager) {
         // Skip if already migrated
         if isMigrationCompleted {
             return
         }
         
+        let commandsBefore = commandManager.commands.count
+        
         // Migrate custom commands
         commandManager.migrateFromLegacySystems(customCommands: customCommandsManager.commands)
         
-        // Mark migration as complete
-        UserDefaults.standard.set(true, forKey: migrationCompletedKey)
+        // Only mark migration as complete if commands were loaded successfully
+        // (the manager should have at least the built-in commands after migration)
+        if !commandManager.commands.isEmpty || commandsBefore == 0 {
+            UserDefaults.standard.set(true, forKey: migrationCompletedKey)
+        }
     }
     
     /// Forces a re-migration (for testing or if needed)

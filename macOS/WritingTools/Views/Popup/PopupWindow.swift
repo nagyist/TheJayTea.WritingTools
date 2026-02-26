@@ -24,10 +24,6 @@ class PopupWindow: NSWindow {
 
     configureWindow()
     setupTrackingArea()
-
-    Task { @MainActor [weak self] in
-      self?.updateWindowSize()
-    }
   }
 
   private func configureWindow() {
@@ -112,7 +108,7 @@ class PopupWindow: NSWindow {
     hasCompletedInitialLayout = true
 
     if animate {
-      NSAnimationContext.runAnimationGroup { context in
+      NSAnimationContext.runAnimationGroup({ context in
         context.duration = 0.25
         context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
 
@@ -131,7 +127,9 @@ class PopupWindow: NSWindow {
 
           self.animator().setFrame(frame, display: true)
         }
-      }
+      }, completionHandler: { [weak self] in
+        self?.setupTrackingArea()
+      })
     } else {
       setContentSize(NSSize(width: windowWidth, height: contentHeight))
 
@@ -145,6 +143,7 @@ class PopupWindow: NSWindow {
 
         setFrame(frame, display: true)
       }
+      setupTrackingArea()
     }
   }
 

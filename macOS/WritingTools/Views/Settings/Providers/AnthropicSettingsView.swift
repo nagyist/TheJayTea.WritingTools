@@ -11,7 +11,18 @@ import AppKit
 struct AnthropicSettingsView: View {
     @Bindable var settings = AppSettings.shared
     @Binding var needsSaving: Bool
-    @State private var modelSelection: AnthropicModel = .claude45Sonnet
+    @State private var modelSelection: AnthropicModel
+
+    init(needsSaving: Binding<Bool>) {
+        self._needsSaving = needsSaving
+        // Initialize model selection from current settings to avoid flash on appear
+        let currentModel = AppSettings.shared.anthropicModel
+        if let knownModel = AnthropicModel(rawValue: currentModel), knownModel != .custom {
+            self._modelSelection = State(initialValue: knownModel)
+        } else {
+            self._modelSelection = State(initialValue: .custom)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {

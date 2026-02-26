@@ -63,9 +63,6 @@ struct ResponseView: View {
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     @State private var inputText: String = ""
     @State private var isRegenerating: Bool = false
-    @State private var scrollProxy: ScrollViewProxy?
-    @State private var latestMessageId: UUID?
-    @State private var showSettings = false
     @State private var errorMessage: String?
     @State private var showError: Bool = false
     
@@ -148,7 +145,7 @@ struct ResponseView: View {
                             .labelStyle(.iconOnly)
                     }
                     .buttonStyle(.borderless)
-                    .keyboardShortcut("r", modifiers: .command)
+                    .keyboardShortcut("0", modifiers: .command)
                     .accessibilityLabel("Reset text size")
                     .accessibilityHint("Returns text size to the default")
                 }
@@ -275,7 +272,6 @@ struct ChatMessageView: View {
     let message: ChatMessage
     let fontSize: CGFloat
     @Environment(\.accessibilityReduceMotion) var reduceMotion
-    @State private var isHovering: Bool = false
     @State private var showCopiedFeedback: Bool = false
     
     var body: some View {
@@ -290,9 +286,6 @@ struct ChatMessageView: View {
         }
         .padding(.top, 4)
         .animation(reduceMotion ? nil : .spring(), value: message.role)
-        .onHover { hovering in
-            isHovering = hovering
-        }
     }
     
     @ViewBuilder
@@ -739,6 +732,13 @@ final class ResponseViewModel {
         initialStreamingTask?.cancel()
         followUpStreamingTask?.cancel()
         fontSizeSaveTask?.cancel()
+        // Ensure the provider's in-flight request is also cancelled even if
+        // onDisappear didn't fire (e.g., parent dismissed the window directly).
+        // deinit of a @MainActor class runs on the main actor, but the compiler
+        // cannot prove it — use assumeIsolated to bridge the gap.
+        MainActor.assumeIsolated {
+            provider.cancel()
+        }
     }
 }
 

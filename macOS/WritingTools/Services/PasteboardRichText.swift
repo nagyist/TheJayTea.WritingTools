@@ -44,6 +44,9 @@ extension NSPasteboard {
     }
 
     if let html = data(forType: .html) {
+      // HTML parsing via NSAttributedString uses WebKit internally and can be
+      // very slow for large payloads. Cap at 256 KB to prevent UI freezes.
+      guard html.count <= 256 * 1024 else { return nil }
       if let att = try? NSAttributedString(
         data: html,
         options: [.documentType: NSAttributedString.DocumentType.html],

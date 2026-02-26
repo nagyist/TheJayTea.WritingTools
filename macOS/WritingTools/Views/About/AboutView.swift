@@ -10,7 +10,7 @@ private enum AboutURLs {
 
 struct AboutView: View {
     @Bindable private var settings = AppSettings.shared
-    @State private var updateChecker = UpdateChecker.shared
+    private var updateChecker = UpdateChecker.shared
 
     private var appVersion: String {
         let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String

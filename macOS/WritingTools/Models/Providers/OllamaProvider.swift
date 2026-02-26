@@ -48,6 +48,7 @@ private struct GenerateChunk: Decodable {
 final class OllamaProvider: AIProvider {
     var isProcessing = false
     private var config: OllamaConfig
+    private var activeTask: Task<Void, any Error>?
 
     init(config: OllamaConfig) {
         self.config = config
@@ -145,6 +146,7 @@ final class OllamaProvider: AIProvider {
         isProcessing = true
         defer {
             isProcessing = false
+            activeTask = nil
         }
 
         let imageMode = AppSettings.shared.ollamaImageMode
@@ -198,34 +200,42 @@ final class OllamaProvider: AIProvider {
         requestBuilder.timeoutInterval = 60
         let request = requestBuilder
 
-        let (stream, response) = try await URLSession.shared.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw Self.makeClientError("Invalid response from server.")
-        }
+        // Wrap work in a stored task so cancel() can interrupt it
+        let streamTask = Task { @MainActor in
+            let (stream, response) = try await URLSession.shared.bytes(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw Self.makeClientError("Invalid response from server.")
+            }
 
-        if http.statusCode != 200 {
-            var data = Data()
-            for try await byte in stream { data.append(byte) }
-            let message = Self.decodeServerError(from: data)
-            throw Self.makeServerError(http.statusCode, message)
-        }
+            if http.statusCode != 200 {
+                var data = Data()
+                for try await byte in stream { data.append(byte) }
+                let message = Self.decodeServerError(from: data)
+                throw Self.makeServerError(http.statusCode, message)
+            }
 
-        for try await line in stream.lines {
-            try Task.checkCancellation()
-            guard let data = line.data(using: .utf8) else { continue }
-            if let chunk = try? JSONDecoder().decode(ChatChunk.self, from: data) {
-                if let t = chunk.message?.content {
-                    onChunk(t)
-                }
-                if chunk.done == true { break }
-                if let err = chunk.error, !err.isEmpty {
-                    throw Self.makeServerError(500, err)
+            for try await line in stream.lines {
+                try Task.checkCancellation()
+                guard let data = line.data(using: .utf8) else { continue }
+                if let chunk = try? JSONDecoder().decode(ChatChunk.self, from: data) {
+                    if let t = chunk.message?.content {
+                        onChunk(t)
+                    }
+                    if chunk.done == true { break }
+                    if let err = chunk.error, !err.isEmpty {
+                        throw Self.makeServerError(500, err)
+                    }
                 }
             }
         }
+        activeTask = streamTask
+
+        try await streamTask.value
     }
 
     func cancel() {
+        activeTask?.cancel()
+        activeTask = nil
         isProcessing = false
     }
 
@@ -269,9 +279,7 @@ final class OllamaProvider: AIProvider {
         }
 
         for try await line in stream.lines {
-            if Task.isCancelled {
-                break
-            }
+            try Task.checkCancellation()
             guard let data = line.data(using: .utf8) else { continue }
             if let chunk = try? JSONDecoder().decode(ChatChunk.self, from: data) {
                 if let t = chunk.message?.content { aggregate += t }

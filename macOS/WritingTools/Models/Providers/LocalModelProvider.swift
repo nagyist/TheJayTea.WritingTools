@@ -2,7 +2,6 @@ import MLX
 import MLXVLM
 import MLXLLM
 import MLXLMCommon
-import MLXRandom
 import SwiftUI
 import Observation
 import Hub
@@ -16,7 +15,7 @@ private let logger = AppLogger.logger("LocalModelProvider")
 /// Uses MLX.GPU.snapshot() to get current memory state.
 private func logGPUMemoryUsage(at checkpoint: String) {
     #if DEBUG
-    let snapshot = MLX.GPU.snapshot()
+    let snapshot = Memory.snapshot()
     let activeMB = Double(snapshot.activeMemory) / (1024 * 1024)
     let cacheMB = Double(snapshot.cacheMemory) / (1024 * 1024)
     let peakMB = Double(snapshot.peakMemory) / (1024 * 1024)
@@ -118,20 +117,10 @@ class LocalModelProvider {
         selectedModelType?.isVisionModel ?? false
     }
     
-    /// Extracts the HuggingFace repo ID string from a ModelConfiguration.
-    private func repoID(from config: ModelConfiguration) -> String? {
-        // Use pattern matching on the Identifier enum
-        let description = String(describing: config.id)
-        // Format: id("org/repo", revision: "main") or id("org/repo")
-        guard description.hasPrefix("id(\"") else { return nil }
-        // Extract everything between the first quote pair
-        let afterPrefix = description.dropFirst(4) // drop id("
-        guard let endQuote = afterPrefix.firstIndex(of: "\"") else { return nil }
-        return String(afterPrefix[afterPrefix.startIndex..<endQuote])
-    }
-
     private func cacheKey(for config: ModelConfiguration) -> String {
-        repoID(from: config) ?? String(describing: config.id)
+        // Use the stable `name` property provided by MLXLMCommon rather than
+        // parsing the debug description of `config.id`, which is fragile.
+        config.name
     }
 
     /// Returns the canonical model directory using HubApi's own path resolution.
@@ -186,13 +175,13 @@ class LocalModelProvider {
     init() {
         if isPlatformSupported {
             // Fix #9: 512MB GPU cache for 3-4B models on Apple Silicon unified memory
-            MLX.GPU.set(cacheLimit: 512 * 1024 * 1024)
+            MLX.Memory.cacheLimit = 512 * 1024 * 1024
 
             // Fix #14: Seed once at init instead of every request
             MLXRandom.seed(UInt64(Date.timeIntervalSinceReferenceDate * 1000))
 
             observeSettings()
-            checkModelStatus()
+            Task { await checkModelStatus() }
 
         } else {
             modelInfo = "Local LLM is only available on Apple Silicon devices"
@@ -243,7 +232,7 @@ class LocalModelProvider {
             Task { @MainActor [weak self] in
                 // When the selection changes, reset state and check the new model.
                 self?.resetModelState()
-                self?.checkModelStatus()
+                await self?.checkModelStatus()
                 self?.observeSettings()
             }
         }
@@ -266,7 +255,7 @@ class LocalModelProvider {
     }
     
     // Fix #6: Added skipIfError parameter to prevent overwriting error state after load failure
-    private func checkModelStatus(skipIfError: Bool = false) {
+    private func checkModelStatus(skipIfError: Bool = false) async {
         guard isPlatformSupported else {
             modelInfo = "Local LLM is only available on Apple Silicon devices"
             loadState = .error("Platform not supported")
@@ -292,35 +281,40 @@ class LocalModelProvider {
         
         loadState = .checking
         modelInfo = "Checking status for \(modelType.displayName)..."
-        
-        let fileCoordinator = NSFileCoordinator()
-        var fileError: NSError?
-        var exists = false
-        var isDirectory: ObjCBool = false
-        var isEmpty = true
-        
-        fileCoordinator.coordinate(readingItemAt: modelDir, options: .withoutChanges, error: &fileError) { url in
-            exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-            if exists && isDirectory.boolValue {
-                do {
-                    let contents = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
-                    isEmpty = contents.isEmpty
-                } catch {
-                    logger.error("Error reading directory contents: \(error.localizedDescription)")
-                    isEmpty = true
+
+        // Perform file I/O off the main actor to avoid blocking the UI.
+        let dirURL = modelDir
+        let result: (exists: Bool, isDir: Bool, isEmpty: Bool, error: NSError?) = await Task.detached(priority: .userInitiated) {
+            let fileCoordinator = NSFileCoordinator()
+            var fileError: NSError?
+            var exists = false
+            var isDirectory: ObjCBool = false
+            var isEmpty = true
+
+            fileCoordinator.coordinate(readingItemAt: dirURL, options: .withoutChanges, error: &fileError) { url in
+                exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                if exists && isDirectory.boolValue {
+                    do {
+                        let contents = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+                        isEmpty = contents.isEmpty
+                    } catch {
+                        logger.error("Error reading directory contents: \(error.localizedDescription)")
+                        isEmpty = true
+                    }
                 }
             }
-        }
-        
-        if let fileError = fileError {
+            return (exists, isDirectory.boolValue, isEmpty, fileError)
+        }.value
+
+        if let fileError = result.error {
             loadState = .error("Error checking model directory: \(fileError.localizedDescription)")
             modelInfo = "Error checking \(modelType.displayName)."
             lastError = fileError.localizedDescription
-        } else if exists && isDirectory.boolValue && !isEmpty {
+        } else if result.exists && result.isDir && !result.isEmpty {
             loadState = .downloaded
             modelInfo = "\(modelType.displayName) is downloaded."
         } else {
-            if exists && isDirectory.boolValue && isEmpty {
+            if result.exists && result.isDir && result.isEmpty {
                 // Attempt to remove empty directory
                 try? FileManager.default.removeItem(at: modelDir)
                 logger.debug("checkModelStatus: Removed empty directory at \(modelDir.path)")
@@ -455,13 +449,14 @@ class LocalModelProvider {
 
     func cleanLegacyCacheForSelectedModel() {
         // Remove any old cached copy (previous defaultHubApi downloads stored in ~/Library/Caches)
-        guard let config = selectedModelConfiguration,
-              let repoID = repoID(from: config) else { return }
+        guard let config = selectedModelConfiguration else { return }
+        let modelName = config.name
         let caches =
             FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Caches", isDirectory: true)
-        let repoName = repoID.split(separator: "/").last.map(String.init) ?? ""
+        // Extract the repo name portion (after the slash in "org/repo")
+        let repoName = modelName.split(separator: "/").last.map(String.init) ?? ""
         guard !repoName.isEmpty else { return }
         if let contents = try? FileManager.default.contentsOfDirectory(at: caches, includingPropertiesForKeys: nil) {
             for url in contents where url.lastPathComponent.localizedCaseInsensitiveContains(repoName) {
@@ -471,7 +466,7 @@ class LocalModelProvider {
     }
 
     
-    func deleteModel() throws {
+    func deleteModel() async throws {
         guard isPlatformSupported else {
             throw NSError(domain: "LocalLLM", code: -1, userInfo: [NSLocalizedDescriptionKey: "Platform not supported"])
         }
@@ -479,7 +474,7 @@ class LocalModelProvider {
             throw NSError(domain: "LocalLLM", code: -1, userInfo: [NSLocalizedDescriptionKey: "No model selected to delete."])
         }
         let key = cacheKey(for: modelType.configuration)
-        guard !isDownloading && !running && loadState != .loading else { // Also check loading state
+        guard !isDownloading && !running && loadState != .loading else {
             throw NSError(domain: "LocalLLM", code: -1, userInfo: [NSLocalizedDescriptionKey: "Cannot delete while model is busy (downloading, running, or loading)"])
         }
         
@@ -487,31 +482,33 @@ class LocalModelProvider {
             loadState = .downloaded
         }
         
+        // Perform the potentially multi-GB file deletion off the main thread
+        let dirPath = modelDir.path
+        let displayName = modelType.displayName
         do {
-            var isDirectory: ObjCBool = false
-            let exists = FileManager.default.fileExists(atPath: modelDir.path, isDirectory: &isDirectory)
+            try await Task.detached(priority: .utility) {
+                let fm = FileManager.default
+                var isDirectory: ObjCBool = false
+                let exists = fm.fileExists(atPath: dirPath, isDirectory: &isDirectory)
+                
+                if exists {
+                    try fm.removeItem(atPath: dirPath)
+                }
+            }.value
             
-            if exists && isDirectory.boolValue {
-                try FileManager.default.removeItem(at: modelDir)
-                logger.debug("Model directory deleted: \(modelDir.path)")
-            } else if exists { // It's a file? Try deleting anyway.
-                try FileManager.default.removeItem(at: modelDir)
-                logger.warning("Expected directory but found file at \(modelDir.path), removed.")
-            } else {
-                logger.debug("Model directory not found, nothing to delete: \(modelDir.path)")
-            }
+            logger.debug("Model directory deleted: \(dirPath)")
             
-            // Reset state *after* successful deletion or if not found
-            resetModelState() // Reset everything
+            // Reset state *after* successful deletion (back on MainActor)
+            resetModelState()
             if cachedContainer?.key == key {
                 cachedContainer = nil
             }
-            checkModelStatus() // Re-check, should now be .needsDownload
-            modelInfo = "\(modelType.displayName) deleted." // Update info *after* check
+            Task { await checkModelStatus() }
+            modelInfo = "\(displayName) deleted."
             
         } catch {
-            logger.error("Failed to delete model \(modelType.displayName): \(error.localizedDescription)")
-            let message = "Failed to delete \(modelType.displayName): \(error.localizedDescription)"
+            logger.error("Failed to delete model \(displayName): \(error.localizedDescription)")
+            let message = "Failed to delete \(displayName): \(error.localizedDescription)"
             lastError = message
             modelInfo = message
             loadState = .error(message)
@@ -619,7 +616,7 @@ class LocalModelProvider {
                 }
                 
                 // Fix #6: Use skipIfError to prevent overwriting the error state we just set
-                checkModelStatus(skipIfError: true)
+                await checkModelStatus(skipIfError: true)
                 
                 // Re-throw the original error or a CancellationError
                 if wasExplicitlyCancelled || isCancellationError {
@@ -920,8 +917,8 @@ class LocalModelProvider {
         }
 
         // Update stats
-        let ttftFormatted = String(format: "%.2f", timeToFirstToken)
-        let tpsFormatted = String(format: "%.2f", completionInfo?.tokensPerSecond ?? 0)
+        let ttftFormatted = timeToFirstToken.formatted(.number.precision(.fractionLength(2)))
+        let tpsFormatted = (completionInfo?.tokensPerSecond ?? 0).formatted(.number.precision(.fractionLength(2)))
         stat = "TTFT: \(ttftFormatted)s | TPS: \(tpsFormatted)"
         logGPUMemoryUsage(at: "Generation Complete")
 
@@ -981,8 +978,8 @@ class LocalModelProvider {
             onChunk(pendingText)
         }
 
-        let ttftFormatted = String(format: "%.2f", timeToFirstToken)
-        let tpsFormatted = String(format: "%.2f", completionInfo?.tokensPerSecond ?? 0)
+        let ttftFormatted = timeToFirstToken.formatted(.number.precision(.fractionLength(2)))
+        let tpsFormatted = (completionInfo?.tokensPerSecond ?? 0).formatted(.number.precision(.fractionLength(2)))
         stat = "TTFT: \(ttftFormatted)s | TPS: \(tpsFormatted)"
         logGPUMemoryUsage(at: "Generation Complete")
     }

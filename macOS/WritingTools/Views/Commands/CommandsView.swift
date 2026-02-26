@@ -197,6 +197,7 @@ struct CommandRow: View {
     let onDelete: (CommandModel) -> Void
     
     @Environment(\.colorScheme) var colorScheme
+    @State private var showDeleteConfirmation = false
     
     var body: some View {
         HStack(spacing: 16) {
@@ -243,7 +244,7 @@ struct CommandRow: View {
                 .accessibilityLabel("Edit \(command.name)")
                 .accessibilityHint("Open editor for this command")
                 
-                Button(action: { onDelete(command) }) {
+                Button(action: { showDeleteConfirmation = true }) {
                     Image(systemName: "trash")
                         .font(.body)
                         .foregroundStyle(.red)
@@ -259,6 +260,14 @@ struct CommandRow: View {
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
+        .alert("Delete Command", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                onDelete(command)
+            }
+        } message: {
+            Text("Are you sure you want to delete \"\(command.name)\"? This action cannot be undone.")
+        }
     }
 }
 
